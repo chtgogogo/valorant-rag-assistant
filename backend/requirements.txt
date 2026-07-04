@@ -1,0 +1,11 @@
+fastapi==0.115.0
+uvicorn==0.30.6
+python-multipart==0.0.9
+pydantic==2.9.2
+langchain==0.2.16
+langchain-openai==0.1.25
+langsmith==0.1.131
+chromadb==0.5.5
+sentence-transformers==3.0.1
+python-docx==1.1.2
+pypdf==4.3.1
