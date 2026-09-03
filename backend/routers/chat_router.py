@@ -4,7 +4,7 @@ chat_router = APIRouter()
 # 测试接口保留
 @chat_router.get("/test", response_model=ApiResponse, summary="测试模块加载")
 async def test_chat_module():
-    return ApiResponse(msg="对话模块加载成功", data="测试通过")
+    return ApiResponse(msg="对话模块加载成功", data={"status": "测试通过"})
 @chat_router.get("/test_llm", response_model=ApiResponse, summary="测试大模型调用")
 async def test_llm(question: str = "你好，介绍一下你自己"):
     from services.chat_service import test_llm_call

@@ -6,6 +6,14 @@ from langchain.prompts import ChatPromptTemplate
 from config.settings import LLM_CONFIG, SYSTEM_PROMPT, CHAT_CONFIG, FALLBACK_ANSWER, REFUSE_ANSWER
 from schemas.models import ChatMessage, SearchResult
 from utils.sensitive import filter_sensitive
+
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
 # 全局大模型实例
 llm = ChatOpenAI(
     api_key=LLM_CONFIG["api_key"],
@@ -13,8 +21,17 @@ llm = ChatOpenAI(
     model=LLM_CONFIG["model_name"],
     temperature=LLM_CONFIG["temperature"],
     max_tokens=LLM_CONFIG["max_tokens"],
-    timeout=10 # 加超时，避免卡主
+    timeout=30  # 加超时，RAG场景prompt较长需要更长时间
 )
+# -------------------------- 大模型调用测试 --------------------------
+def test_llm_call(question: str) -> str:
+    """测试大模型是否能正常调用，返回回答文本"""
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "你是无畏契约游戏助手，简短回答即可。"),
+        ("human", "{question}")
+    ])
+    return _call_llm_with_retry(prompt, {"question": question})
+
 # 自定义关键词规则，命中直接返回，不调用大模型
 CUSTOM_RULES = {
     "帮助": "我是无畏契约智能游戏助手，你可以问我：\n1. 英雄定位、技能、背景故事\n2. 武器属性、伤害、价格\n3. 地图点位、道具技巧\n4. 游戏玩法、上分技巧",
@@ -33,7 +50,8 @@ def load_history(session_id: str) -> list[ChatMessage]:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return [ChatMessage(**msg) for msg in data]
-    except:
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("读取历史失败 session_id=%s: %s，返回空历史", session_id, e)
         return []
 def save_history(session_id: str, history: list[ChatMessage]):
     max_len = CHAT_CONFIG["max_history_turns"]
@@ -53,42 +71,26 @@ def rollback_history(session_id: str, turn_index: int) -> bool:
     new_history = history[:turn_index]
     save_history(session_id, new_history)
     return True
-# -------------------------- 检索部分（后期对接改这里就行！） --------------------------
+# -------------------------- 检索部分（已对接分工3真实检索） --------------------------
 def search_docs(question: str, kb_id: str = "valorant", top_k: int = 3) -> list[SearchResult]:
     """
-    检索文档，现在用模拟数据，等分工3写完，把下面mock_search的内容换成：
+    检索文档，调用分工3的向量检索引擎
+    """
     from services.vector_service import search_vector
     return search_vector(question, kb_id, top_k)
-    其他代码一行都不用改！
-    """
-    # 模拟数据，后期删掉
-    mock_data = [
-        SearchResult(
-            content="捷风（Jett）是无畏契约中的决斗者定位英雄，国籍韩国，技能包括：1. 上升气流（Q）：立即向上跃起；2. 顺风（E）：向移动方向冲刺一段距离；3. 逐风（C）：扔出烟雾弹；4. 飓刃（X）：召唤5把高精度飞刀，击杀敌人刷新飞刀。",
-            source="无畏契约英雄手册.docx",
-            score=0.92,
-            doc_id="doc_001"
-        ),
-        SearchResult(
-            content="捷风是高机动性决斗者，适合突破、拉枪线，常见技巧：E技能冲刺后急停开枪，Q技能升空不要原地停留容易被狙击，X飞刀适合中距离对枪。",
-            source="无畏契约进阶技巧.pdf",
-            score=0.87,
-            doc_id="doc_002"
-        )
-    ]
-    return mock_data
 # ----------------------------------------------------------------------------------------
 def _call_llm_with_retry(prompt, inputs, max_retry=2):
-    """大模型调用带重试，失败自动重试2次"""
-    for i in range(max_retry+1):
+    """大模型调用带重试：失败自动重试，最终失败返回友好提示（真实错误已写入日志）"""
+    for i in range(max_retry + 1):
         try:
             chain = prompt | llm
             response = chain.invoke(inputs)
             return response.content
         except Exception as e:
+            logger.error("大模型调用失败(第%d次) 输入=%s 错误=%s", i + 1, inputs, e)
             if i == max_retry:
                 return "抱歉，当前服务有点忙，请稍后再试~"
-            time.sleep(1) # 等1秒重试
+            time.sleep(1)  # 等1秒后重试
 def chat_single_turn(session_id: str, question: str, kb_id: str = "valorant") -> tuple[str, list[dict], list[ChatMessage]]:
     # 1. 敏感词校验
     is_sensitive, filtered_q = filter_sensitive(question)

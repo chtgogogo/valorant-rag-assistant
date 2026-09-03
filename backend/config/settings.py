@@ -44,7 +44,7 @@ MAX_FILE_SIZE = 10 * 1024 * 1024
 # ------------------------------------------------------
 CHAT_CONFIG = {
     "max_history_turns": 20,
-    "similarity_threshold": 0.7,
+    "similarity_threshold": 0.35,
     "history_path": "./data/chat_history"
 }
 

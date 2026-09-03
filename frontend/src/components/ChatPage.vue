@@ -1,0 +1,1270 @@
+﻿<template>
+   <div class="app-layout">
+     <!-- 知识库侧边栏 -->
+     <aside class="kb-sidebar" :class="{ open: sidebarOpen }">
+       <div class="sidebar-header">
+         <div class="sidebar-logo">
+           <svg viewBox="0 0 40 40" class="mini-logo">
+             <polygon points="20,4 36,12 36,28 20,36 4,28 4,12" fill="none" stroke="currentColor" stroke-width="2"/>
+             <text x="20" y="26" text-anchor="middle" fill="currentColor" font-weight="900" font-size="16" font-style="italic">V</text>
+           </svg>
+         </div>
+         <span class="sidebar-title">知识库</span>
+         <button class="sidebar-close" @click="sidebarOpen = false"><svg class="close-icon" viewBox="0 0 16 16"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg></button>
+       </div>
+       <div class="sidebar-categories">
+         <div class="cat-section" v-for="cat in kbCategories" :key="cat.name">
+           <div class="cat-header" @click="cat.open = !cat.open">
+ <span class="cat-icon" v-html="cat.icon"></span>
+             <span class="cat-name">{{ cat.name }}</span>
+             <span class="cat-arrow" :class="{ rotated: cat.open }"><svg class="chevron-icon" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+           </div>
+           <div class="cat-items" v-show="cat.open">
+             <div class="cat-item" v-for="item in cat.items" :key="item.label" @click="quickAsk(item.label)">
+               <span class="item-label">{{ item.label }}</span>
+               <span class="item-badge" v-if="item.badge">{{ item.badge }}</span>
+             </div>
+           </div>
+         </div>
+       </div>
+       <div class="sidebar-footer">
+         <div class="connection-status" :class="{ online: backendOnline }">
+           <span class="status-dot"></span>
+           <span class="status-text">{{ backendOnline ? '已连接' : '离线' }}</span>
+         </div>
+       </div>
+     </aside>
+ 
+     <div class="chat-container" :class="{ sidebarActive: sidebarOpen }">
+       <!-- 动态背景 -->
+       <div class="bg-gradient-wpr">
+         <div class="bg-gradient"></div>
+       </div>
+    <div class="bg-particles">
+      <div class="particle" v-for="n in 20" :key="n" :style="particleStyle(n)"></div>
+    </div>
+
+    <!-- 顶部标题栏 -->
+       <header class="chat-header">
+         <div class="header-brand">
+           <button class="menu-toggle" @click="sidebarOpen = !sidebarOpen" title="知识库">
+             <svg viewBox="0 0 24 24" class="menu-icon"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+           </button>
+           <div class="logo-wrap">
+             <svg class="logo-svg" viewBox="0 0 40 40">
+               <polygon points="20,4 36,12 36,28 20,36 4,28 4,12" fill="none" stroke="currentColor" stroke-width="2"/>
+               <text x="20" y="26" text-anchor="middle" fill="currentColor" font-weight="900" font-size="16" font-style="italic">V</text>
+             </svg>
+           </div>
+           <div class="brand-text">
+             <h1>无畏契约<span class="accent"> 知识问答</span></h1>
+             <p>基于 RAG 的无畏契约战术问答系统</p>
+           </div>
+         </div>
+         <div class="header-tools">
+           <div class="connection-badge" :class="{ connected: backendOnline }">
+             <span class="badge-dot"></span>
+             <span class="badge-label">{{ backendOnline ? '已连接' : '未连接' }}</span>
+           </div>
+           <button class="tool-btn" @click="handleClear" :disabled="loading" title="清空对话">
+             <svg viewBox="0 0 24 24" class="tool-icon"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+           </button>
+           <button class="tool-btn" @click="handleRollback" :disabled="loading || messages.length === 0" title="撤回">
+             <svg viewBox="0 0 24 24" class="tool-icon"><path d="M4 17l6-6-6-6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11h7a4 4 0 010 8h-1" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+           </button>
+         </div>
+       </header>
+
+    <!-- 消息区域 -->
+    <main class="chat-main" ref="messagesContainer">
+      <!-- 欢迎屏 -->
+      <transition name="fade">
+        <div v-if="messages.length === 0" class="welcome-area">
+          <div class="welcome-hero">
+            <svg class="hero-icon" viewBox="0 0 100 100">
+              <polygon points="50,8 88,28 88,72 50,92 12,72 12,28" fill="none" stroke="#ff4655" stroke-width="2.5"/>
+              <text x="50" y="62" text-anchor="middle" fill="#ff4655" font-weight="900" font-size="36" font-style="italic">V</text>
+            </svg>
+            <h2 class="hero-title">无畏契约知识问答</h2>
+            <p class="hero-desc">随时问我英雄技能、武器属性、地图策略，秒回答案</p>
+          </div>
+          <div class="quick-grid">
+            <div
+              class="quick-card"
+              v-for="(q, idx) in quickQuestions"
+              :key="idx"
+              :style="{ animationDelay: idx * 0.1 + 's' }"
+               @click="quickAsk(q.text)"
+            >
+ <span class="q-emoji" v-html="q.emoji"></span>
+               <span class="q-text">{{ q.label }}</span>
+            </div>
+          </div>
+        </div>
+      </transition>
+
+      <!-- 聊天消息 -->
+      <transition-group name="msg" tag="div" class="messages-list">
+        <div
+          v-for="msg in messages"
+          :key="msg.id"
+          class="msg-row"
+          :class="msg.role"
+        >
+          <div class="msg-avatar" :class="msg.role">
+            <template v-if="msg.role === 'assistant'">
+              <img class="avatar-img" src="/sage-avatar.png" alt="Sage" />
+            </template>
+            <template v-else>
+              <img class="avatar-img" src="/iso-avatar.png" alt="Iso" />
+            </template>
+          </div>
+          <div class="msg-body">
+            <div class="msg-bubble" :class="msg.role">
+              <div v-if="msg.role === 'assistant'" class="md-body" v-html="msg.html"></div>
+              <div v-else class="user-text">{{ msg.content }}</div>
+            </div>
+            <div v-if="msg.sources && msg.sources.length > 0" class="msg-footnotes">
+              <span class="fn-label">参考</span>
+              <span class="fn-tag" v-for="src in msg.sources" :key="src.id">{{ src.name }}</span>
+            </div>
+            <div class="msg-time">{{ msg.time }}</div>
+          </div>
+        </div>
+      </transition-group>
+
+      <!-- 加载动画 -->
+      <div v-if="loading" class="msg-row assistant">
+        <div class="msg-avatar assistant">
+          <svg viewBox="0 0 32 32" class="avatar-svg">
+            <polygon points="16,4 28,10 28,22 16,28 4,22 4,10" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <text x="16" y="21" text-anchor="middle" fill="currentColor" font-weight="900" font-size="12" font-style="italic">V</text>
+          </svg>
+        </div>
+        <div class="msg-body">
+          <div class="msg-bubble assistant typing-bubble">
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+       <!-- 底部输入区 -->
+    <footer class="chat-footer">
+      <div class="input-wrapper">
+        <textarea
+          ref="inputRef"
+          v-model="inputText"
+          class="msg-input"
+          placeholder="输入无畏契约相关问题..."
+          rows="1"
+          @keydown.enter.exact.prevent="handleSend"
+          @input="autoResize"
+          :disabled="loading"
+        ></textarea>
+        <button
+          class="send-btn"
+          @click="handleSend"
+          :disabled="!inputText.trim() || loading"
+          :class="{ active: inputText.trim() && !loading }"
+        >
+          <svg v-if="!loading" viewBox="0 0 24 24" class="send-icon">
+            <path d="M2 21L23 12L2 3V10L17 12L2 14V21Z" fill="currentColor"/>
+          </svg>
+          <span v-else class="loading-spinner"></span>
+        </button>
+     </div>
+    </footer>
+   </div>
+ </div>
+ </template>
+
+<script setup>
+import { ref, nextTick, onMounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Marked } from 'marked'
+import { sendMessage, clearHistory, rollbackHistory, testChat } from '../api.js'
+
+// ---- 状态 ----
+ const messages = ref([])
+ const sidebarOpen = ref(window.innerWidth > 768)
+const inputText = ref('')
+const loading = ref(false)
+const backendOnline = ref(false)
+const messagesContainer = ref(null)
+const inputRef = ref(null)
+
+let msgCounter = 0
+const sessionId = 'web_' + Date.now()
+
+ const kbCategories = ref([
+   {
+     name: '英雄指南', icon: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><path d="M14 9l-2 2m0 0l-4 4m4-4l2 2m-2-2l-2-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>', open: true,
+     items: [
+       { label: '捷风(Jett)怎么玩？', badge: '决斗者' },
+       { label: '不死鸟(Phoenix)技能', badge: '决斗者' },
+       { label: '芮娜(Reyna)攻略', badge: '决斗者' },
+       { label: '幽影(Omen)传送技巧', badge: '控场者' },
+       { label: '贤者(Sage)怎么玩？', badge: '哨位' },
+       { label: '猎枭(Sova)侦察技巧', badge: '先锋' },
+       { label: '蝰蛇(Viper)毒雾控制', badge: '控场者' },
+       { label: '全部英雄列表', badge: '汇总' },
+     ]
+   },
+   {
+     name: '武器图鉴', icon: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><rect x="3" y="10" width="12" height="4" rx="1" stroke="currentColor" stroke-width="2"/><path d="M15 12h4l3-3v6l-3-3h-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>', open: false,
+     items: [
+       { label: '幻影和狂徒对比', badge: '步枪' },
+       { label: '冥狙狙击技巧', badge: '狙击' },
+       { label: '哪些手枪值得买？', badge: '手枪' },
+       { label: '经济局怎么买装备？', badge: '策略' },
+       { label: '全部武器属性', badge: '汇总' },
+     ]
+   },
+   {
+     name: '地图攻略', icon: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><path d="M9 3L3 9l6 6-6 6 18 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="15" cy="7" r="2" stroke="currentColor" stroke-width="2"/></svg>', open: false,
+     items: [
+       { label: '源工重镇怎么打？', badge: '地图' },
+       { label: '隐士修所攻略', badge: '地图' },
+       { label: '亚海悬城点位', badge: '地图' },
+       { label: '森寒冬港进攻路线', badge: '地图' },
+       { label: '所有地图汇总', badge: '汇总' },
+     ]
+   },
+   {
+     name: '新手入门', icon: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" stroke-width="2"/><path d="M9 10h.01M15 10h.01" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M9 15a3 3 0 006 0H9z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>', open: false,
+     items: [
+       { label: '游戏基础规则', badge: '入门' },
+       { label: '经济系统全解', badge: '进阶' },
+       { label: '新手选什么英雄？', badge: '推荐' },
+       { label: '射击技巧和训练', badge: '技巧' },
+       { label: '上分分段攻略', badge: '攻略' },
+     ]
+   }
+ ])
+ 
+ const quickQuestions = [
+   { emoji: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><path d="M14 9l-2 2m0 0l-4 4m4-4l2 2m-2-2l-2-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',  label: '捷风怎么玩?', text: '捷风怎么玩？' },
+   { emoji: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><rect x="3" y="10" width="12" height="4" rx="1" stroke="currentColor" stroke-width="2"/><path d="M15 12h4l3-3v6l-3-3h-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',  label: '狂徒 vs 幻影', text: '狂徒和幻影哪个好？' },
+   { emoji: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><path d="M9 3L3 9l6 6-6 6 18 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="15" cy="7" r="2" stroke="currentColor" stroke-width="2"/></svg>',  label: '源工重镇地图攻略', text: '源工重镇地图怎么打？' },
+   { emoji: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" stroke-width="2"/><path d="M9 10h.01M15 10h.01" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M9 15a3 3 0 006 0H9z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',  label: '新手英雄推荐', text: '新手适合用什么英雄？' },
+   { emoji: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><path d="M12 2a7 7 0 00-7 7c0 2.4 1.2 4.5 3 5.7V18a2 2 0 002 2h4a2 2 0 002-2v-3.3c1.8-1.2 3-3.3 3-5.7a7 7 0 00-7-7z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M10 21h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',  label: '游戏机制讲解', text: '游戏基本机制是什么？' },
+   { emoji: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><path d="M12 2a10 10 0 00-10 10v8l3-3 3 3 3-3 3 3 3-3 3 3v-8a10 10 0 00-10-10z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="9" cy="11" r="1" fill="currentColor" opacity="0.5"/><circle cx="15" cy="11" r="1" fill="currentColor" opacity="0.5"/></svg>',  label: '幽影技能介绍', text: '幽影技能介绍' },
+ ]
+ 
+ function quickAsk(text) {
+   inputText.value = text
+   handleSend()
+ }
+
+// ---- Markdown 渲染（marked v18 API） ----
+const mdParser = new Marked({
+  breaks: true,
+  gfm: true,
+})
+
+function renderMarkdown(text) {
+  try {
+    // marked v18: parse() 返回 Promise，但同步调用时立即返回
+    return mdParser.parse(text) || text
+  } catch {
+    return text.replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  }
+}
+
+// ---- 菜单函数 ----
+function getTime() {
+  const d = new Date()
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function scrollToBottom() {
+  nextTick(() => {
+    if (messagesContainer.value) {
+      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+    }
+  })
+}
+
+function autoResize() {
+  nextTick(() => {
+    const el = inputRef.value
+    if (el) {
+      el.style.height = 'auto'
+      el.style.height = Math.min(el.scrollHeight, 160) + 'px'
+    }
+  })
+}
+
+// ---- 背景粒子样式 ----
+function particleStyle(n) {
+  const left = ((n * 37 + 13) % 100)
+  const delay = (n * 0.7) % 8
+  const duration = 8 + (n % 6)
+  const size = 2 + (n % 3)
+  return {
+    left: left + '%',
+    animationDelay: delay + 's',
+    animationDuration: duration + 's',
+    width: size + 'px',
+    height: size + 'px',
+  }
+}
+
+// ---- 发送消息 ----
+async function handleSend() {
+  const question = inputText.value.trim()
+  if (!question || loading.value) return
+
+  messages.value.push({
+    id: ++msgCounter,
+    role: 'user',
+    content: question,
+    html: '',
+    sources: [],
+    time: getTime(),
+  })
+
+  inputText.value = ''
+  autoResize()
+  loading.value = true
+  scrollToBottom()
+
+  try {
+    const res = await sendMessage(sessionId, question)
+    const data = res.data
+
+    if (data.code === 200) {
+      messages.value.push({
+        id: ++msgCounter,
+        role: 'assistant',
+        content: data.data.answer,
+        html: renderMarkdown(data.data.answer),
+        sources: data.data.sources || [],
+        time: getTime(),
+      })
+    } else {
+      messages.value.push({
+        id: ++msgCounter,
+        role: 'assistant',
+        content: data.msg || '请求失败',
+        html: renderMarkdown(data.msg || '请求失败'),
+        sources: [],
+        time: getTime(),
+      })
+    }
+  } catch {
+    messages.value.push({
+      id: ++msgCounter,
+      role: 'assistant',
+      content: '网络错误，请检查后端服务是否启动',
+      html: '<p>网络错误，请检查后端服务是否启动</p>',
+      sources: [],
+      time: getTime(),
+    })
+  } finally {
+    loading.value = false
+    scrollToBottom()
+  }
+}
+
+async function handleClear() {
+  try {
+    await ElMessageBox.confirm('确定清空所有对话记录吗？', '清空确认', { type: 'warning' })
+    await clearHistory(sessionId)
+    messages.value = []
+    ElMessage.success('对话已清空')
+  } catch { /* 取消 */ }
+}
+
+async function handleRollback() {
+  try {
+    const turnIndex = Math.max(0, messages.value.length - 2)
+    const res = await rollbackHistory(sessionId, turnIndex)
+    if (res.data.code === 200) {
+      const history = res.data.data.history || []
+      msgCounter = 0
+      messages.value = history.map(msg => ({
+        id: ++msgCounter,
+        role: msg.role,
+        content: msg.content,
+        html: msg.role === 'assistant' ? renderMarkdown(msg.content) : '',
+        sources: [],
+        time: getTime(),
+      }))
+      ElMessage.success('已撤回一轮')
+    } else {
+      ElMessage.error(res.data.msg || '撤回失败')
+    }
+  } catch (err) {
+    ElMessage.error('撤回失败')
+  }
+}
+
+ onMounted(() => {
+   const updateSidebar = () => { sidebarOpen.value = window.innerWidth > 768 }
+   window.addEventListener('resize', updateSidebar)
+   testChat().then(r => { backendOnline.value = r.data.code === 200 }).catch(() => { backendOnline.value = false })
+ })
+</script>
+
+<style scoped>
+/* ============ CUSTOM SVG ICONS ============ */
+.icon-cat {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: inherit;
+}
+
+.chevron-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: inherit;
+  transition: transform 0.25s;
+}
+
+.close-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: inherit;
+}
+
+.cat-icon .icon-cat {
+  color: var(--val-text-dim);
+}
+
+.q-emoji .icon-cat {
+  width: 18px;
+  height: 18px;
+  color: var(--val-text-dim);
+}
+
+.quick-card:hover .q-emoji .icon-cat {
+  color: var(--val-red);
+}
+
+/* ============ VALORANT DARK THEME - REFINED ============ */
+
+:root {
+  --val-red: #ff4655;
+  --val-red-dim: rgba(255, 70, 85, 0.15);
+  --val-bg-base: #0a0f16;
+  --val-bg-surface: #0f1923;
+  --val-bg-elevated: #1a2735;
+  --val-bg-hover: rgba(255, 255, 255, 0.04);
+  --val-border: rgba(100, 135, 160, 0.2);
+  --val-text: #e2e8f0;
+  --val-text-dim: #a0bfd0;
+  --val-text-muted: #6080a0;
+  --val-accent: #4ade80;
+  --val-radius-sm: 6px;
+  --val-radius-md: 10px;
+  --val-radius-lg: 14px;
+}
+
+/* ============ LAYOUT ============ */
+.app-layout {
+  height: 100vh;
+  display: flex;
+  background: #06080a;
+  overflow: hidden;
+}
+
+/* ============ SIDEBAR ============ */
+.kb-sidebar {
+  width: 280px;
+  min-width: 280px;
+  background: linear-gradient(180deg, #0d1620 0%, #0a0f16 100%);
+  border-right: 1px solid var(--val-border);
+  display: flex;
+  flex-direction: column;
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              min-width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.kb-sidebar:not(.open) {
+  width: 0;
+  min-width: 0;
+  border-right: none;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  flex-shrink: 0;
+}
+
+.sidebar-logo .mini-logo {
+  width: 30px;
+  height: 30px;
+  color: var(--val-red);
+  filter: drop-shadow(0 0 8px rgba(255, 70, 85, 0.3));
+}
+
+.sidebar-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--val-text);
+  flex: 1;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.sidebar-close {
+  background: none;
+  border: none;
+  color: var(--val-text-muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--val-radius-sm);
+  transition: all 0.2s;
+  line-height: 1;
+}
+
+.sidebar-close:hover {
+  color: var(--val-text);
+  background: var(--val-bg-hover);
+}
+
+.sidebar-categories {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.sidebar-categories::-webkit-scrollbar { width: 3px; }
+.sidebar-categories::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.06); border-radius: 10px; }
+
+.cat-section { margin: 2px 0; }
+
+.cat-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  cursor: pointer;
+  transition: all 0.2s;
+  user-select: none;
+  border-radius: 0;
+}
+
+.cat-header:hover { background: var(--val-bg-hover); }
+
+.cat-icon { font-size: 15px; line-height: 1; }
+.cat-name { font-size: 12px; font-weight: 600; color: var(--val-text-dim); flex: 1; letter-spacing: 0.3px; }
+.cat-arrow { font-size: 9px; color: var(--val-text-muted); transition: transform 0.25s; }
+.cat-arrow.rotated { transform: rotate(90deg); }
+
+.cat-items { padding: 0 6px; }
+
+.cat-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px 7px 34px;
+  border-radius: var(--val-radius-sm);
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 12.5px;
+  color: var(--val-text-dim);
+}
+
+.cat-item:hover {
+  background: var(--val-red-dim);
+  color: var(--val-text);
+}
+
+.item-badge {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: rgba(255, 70, 85, 0.1);
+  color: #ff8a95;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.sidebar-footer {
+  padding: 12px 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  flex-shrink: 0;
+}
+
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--val-text-muted);
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--val-text-muted);
+  transition: all 0.3s;
+}
+
+.connection-status.online .status-dot {
+  background: var(--val-accent);
+  box-shadow: 0 0 8px rgba(74, 222, 128, 0.5);
+  animation: statusPulse 2s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(74, 222, 128, 0.3); }
+  50% { box-shadow: 0 0 14px rgba(74, 222, 128, 0.6); }
+}
+
+.connection-status.online { color: var(--val-accent); }
+
+/* ============ CHAT CONTAINER ============ */
+.chat-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #06080a;
+  color: var(--val-text);
+  font-family: 'Microsoft YaHei', 'PingFang SC', -apple-system, sans-serif;
+  position: relative;
+  overflow: hidden;
+  transition: margin-left 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ============ BACKGROUND EFFECTS ============ */
+.bg-gradient-wpr {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.bg-gradient {
+  position: absolute;
+  top: -30%;
+  right: -15%;
+  width: 70%;
+  height: 80%;
+  background: radial-gradient(ellipse at center, rgba(255, 70, 85, 0.03) 0%, transparent 65%);
+  animation: gradientDrift 14s ease-in-out infinite alternate;
+}
+
+@keyframes gradientDrift {
+  0% { transform: translate(0, 0) scale(1); opacity: 0.6; }
+  50% { transform: translate(-20px, 15px) scale(1.08); opacity: 0.8; }
+  100% { transform: translate(-40px, 30px) scale(1.15); opacity: 0.6; }
+}
+
+.bg-particles {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.particle {
+  position: absolute;
+  bottom: -10px;
+  background: rgba(255, 70, 85, 0.12);
+  border-radius: 50%;
+  animation: floatUp linear infinite;
+}
+
+@keyframes floatUp {
+  0%   { transform: translateY(0) scale(0); opacity: 0; }
+  8%   { opacity: 0.5; }
+  85%  { opacity: 0.08; }
+  100% { transform: translateY(-110vh) scale(1.3); opacity: 0; }
+}
+
+/* ============ HEADER ============ */
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  background: rgba(6, 8, 12, 0.95);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-bottom: 1px solid rgba(255, 70, 85, 0.12);
+  z-index: 10;
+  flex-shrink: 0;
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.menu-toggle {
+  background: none;
+  border: none;
+  color: var(--val-text-dim);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: var(--val-radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.menu-toggle:hover {
+  color: var(--val-text);
+  background: var(--val-bg-hover);
+}
+
+.menu-icon { width: 18px; height: 18px; }
+
+.logo-wrap {
+  width: 38px;
+  height: 38px;
+}
+
+.logo-svg {
+  width: 100%;
+  height: 100%;
+  color: var(--val-red);
+  filter: drop-shadow(0 0 12px rgba(255, 70, 85, 0.35));
+}
+
+.brand-text h1 {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  color: var(--val-red);
+  line-height: 1.3;
+}
+
+.brand-text h1 .accent {
+  color: var(--val-text);
+  font-weight: 400;
+  font-size: 13px;
+  margin-left: 3px;
+  letter-spacing: 0;
+}
+
+.brand-text p {
+  font-size: 10.5px;
+  color: var(--val-text-muted);
+  margin-top: 1px;
+  letter-spacing: 0.3px;
+}
+
+.header-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.connection-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 11px;
+  color: var(--val-text-muted);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(90, 110, 127, 0.2);
+  transition: all 0.3s;
+}
+
+.connection-badge.connected {
+  color: var(--val-accent);
+  border-color: rgba(74, 222, 128, 0.2);
+  background: rgba(74, 222, 128, 0.04);
+}
+
+.badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--val-text-muted);
+  transition: all 0.3s;
+}
+
+.connection-badge.connected .badge-dot {
+  background: var(--val-accent);
+  box-shadow: 0 0 6px rgba(74, 222, 128, 0.5);
+}
+
+.badge-label { font-size: 11px; }
+
+.tool-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px;
+  border: 1px solid rgba(90, 110, 127, 0.15);
+  border-radius: var(--val-radius-sm);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--val-text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+  min-width: 34px;
+  min-height: 34px;
+}
+
+.tool-btn:hover:not(:disabled) {
+  border-color: rgba(255, 70, 85, 0.3);
+  color: var(--val-red);
+  background: rgba(255, 70, 85, 0.08);
+  transform: scale(1.05);
+}
+
+.tool-btn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.tool-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.tool-icon { width: 15px; height: 15px; }
+
+/* ============ MESSAGES AREA ============ */
+.chat-main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  position: relative;
+  z-index: 1;
+  scroll-behavior: smooth;
+}
+
+.chat-main::-webkit-scrollbar { width: 4px; }
+.chat-main::-webkit-scrollbar-track { background: transparent; }
+.chat-main::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.05); border-radius: 10px; }
+.chat-main::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.1); }
+
+/* ============ WELCOME SCREEN ============ */
+.welcome-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: 40px 20px 60px;
+}
+
+.welcome-hero {
+  text-align: center;
+  margin-bottom: 40px;
+}
+
+.hero-icon {
+  width: 80px;
+  height: 80px;
+  margin-bottom: 20px;
+  filter: drop-shadow(0 0 30px rgba(255, 70, 85, 0.35));
+  animation: heroPulse 4s ease-in-out infinite;
+}
+
+@keyframes heroPulse {
+  0%, 100% { transform: scale(1); filter: drop-shadow(0 0 30px rgba(255, 70, 85, 0.35)); }
+  50% { transform: scale(1.04); filter: drop-shadow(0 0 40px rgba(255, 70, 85, 0.5)); }
+}
+
+.hero-title {
+  font-size: 26px;
+  font-weight: 800;
+  background: linear-gradient(135deg, #ff4655 0%, #ff7b85 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 8px;
+  letter-spacing: 1px;
+}
+
+.hero-desc {
+  font-size: 13px;
+  color: var(--val-text-dim);
+  letter-spacing: 0.3px;
+}
+
+.quick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  max-width: 720px;
+  width: 100%;
+}
+
+.quick-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(90, 110, 127, 0.1);
+  border-radius: var(--val-radius-md);
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: cardIn 0.5s ease-out both;
+}
+
+.quick-card:hover {
+  border-color: rgba(255, 70, 85, 0.25);
+  background: rgba(255, 70, 85, 0.06);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(255, 70, 85, 0.06);
+}
+
+.quick-card:active {
+  transform: translateY(0) scale(0.98);
+}
+
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.q-emoji { font-size: 20px; flex-shrink: 0; }
+.q-text { font-size: 13px; color: var(--val-text-dim); }
+.quick-card:hover .q-text { color: var(--val-text); }
+
+/* ============ MESSAGE LIST ============ */
+.messages-list {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 4px 0;
+}
+
+.msg-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 24px;
+  animation: msgIn 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes msgIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.msg-row.user { flex-direction: row-reverse; }
+
+/* ============ AVATARS ============ */
+.msg-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--val-radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.msg-avatar.assistant {
+  background: rgba(2, 132, 199, 0.1);
+  border: 1px solid rgba(2, 132, 199, 0.2);
+}
+
+.msg-avatar.user {
+  background: rgba(249, 115, 22, 0.1);
+  border: 1px solid rgba(249, 115, 22, 0.2);
+}
+
+.avatar-svg { width: 36px; height: 36px; }
+.avatar-img { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: transparent; }
+.avatar-letter { font-size: 12px; font-weight: 700; color: var(--val-text-dim); }
+
+/* ============ MESSAGE BUBBLES ============ */
+.msg-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-width: 72%;
+}
+
+.msg-row.user .msg-body { align-items: flex-end; }
+
+.msg-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+}
+
+.msg-footnotes { display: flex; gap: 5px; flex-wrap: wrap; }
+
+.fn-tag {
+  font-size: 10px;
+  color: rgba(90, 130, 165, 0.95);
+  background: rgba(74, 109, 140, 0.15);
+  border: 1px solid rgba(74, 109, 140, 0.15);
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+
+.msg-time {
+  font-size: 10px;
+  color: var(--val-text-muted);
+  padding: 0 4px;
+}
+
+.msg-bubble {
+  padding: 12px 16px;
+  border-radius: var(--val-radius-lg);
+  font-size: 14px;
+  line-height: 1.7;
+  word-break: break-word;
+  position: relative;
+}
+
+.msg-bubble.assistant {
+  background: rgba(189, 57, 68, 0.12);
+  border: 1px solid rgba(189, 57, 68, 0.2);
+  border-top-left-radius: 4px;
+  color: #ffffff;
+}
+
+.msg-bubble.user {
+  background: linear-gradient(135deg, #8b1a24 0%, #bd3944 100%);
+  border-top-right-radius: 4px;
+  color: #ffffff;
+  box-shadow: 0 3px 12px rgba(189, 57, 68, 0.2);
+}
+
+.user-text { white-space: pre-wrap; }
+
+/* ============ TYPING INDICATOR ============ */
+.typing-bubble {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 16px 20px;
+}
+
+.typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--val-text-dim);
+  animation: dotBounce 1.4s infinite ease-in-out;
+}
+
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes dotBounce {
+  0%, 80%, 100% { transform: scale(0.5); opacity: 0.3; }
+  40%           { transform: scale(1);   opacity: 1; }
+}
+
+/* ============ INPUT AREA ============ */
+.chat-footer {
+  padding: 14px 24px 16px;
+  background: rgba(6, 8, 12, 0.96);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid rgba(90, 110, 127, 0.1);
+  z-index: 10;
+  flex-shrink: 0;
+}
+
+.input-wrapper {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  max-width: 800px;
+  margin: 0 auto;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(90, 110, 127, 0.12);
+  border-radius: var(--val-radius-md);
+  padding: 5px;
+  transition: border-color 0.25s, box-shadow 0.25s;
+}
+
+.input-wrapper:focus-within {
+  border-color: rgba(255, 70, 85, 0.25);
+  box-shadow: 0 0 0 3px rgba(255, 70, 85, 0.05), inset 0 0 0 1px rgba(255, 70, 85, 0.05);
+}
+
+.msg-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--val-text);
+  font-size: 13.5px;
+  line-height: 1.6;
+  padding: 9px 10px 9px 12px;
+  resize: none;
+  outline: none;
+  font-family: inherit;
+  min-height: 40px;
+  max-height: 150px;
+}
+
+.msg-input::placeholder { color: var(--val-text-muted); }
+.msg-input:disabled { opacity: 0.5; }
+
+.send-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--val-radius-sm);
+  border: none;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--val-text-dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  flex-shrink: 0;
+}
+
+.send-btn.active {
+  background: linear-gradient(135deg, #e63e4d 0%, #ff4655 100%);
+  color: #fff;
+  box-shadow: 0 3px 12px rgba(255, 70, 85, 0.3);
+}
+
+.send-btn.active:hover {
+  background: linear-gradient(135deg, #d63744 0%, #ee3f4e 100%);
+  transform: scale(1.06);
+}
+
+.send-btn.active:active {
+  transform: scale(0.94);
+}
+
+.send-btn:disabled { cursor: not-allowed; }
+.send-icon { width: 16px; height: 16px; }
+
+.loading-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ============ MARKDOWN STYLES ============ */
+.md-body :deep(strong) {
+  color: #ff8a95;
+  font-weight: 700;
+}
+
+.md-body :deep(h1), .md-body :deep(h2), .md-body :deep(h3), .md-body :deep(h4) {
+  color: var(--val-text);
+  margin: 10px 0 5px;
+  font-weight: 700;
+}
+
+.md-body :deep(h2) { font-size: 16px; border-bottom: 1px solid rgba(90, 110, 127, 0.1); padding-bottom: 4px; }
+.md-body :deep(h3) { font-size: 14px; }
+
+.md-body :deep(ul), .md-body :deep(ol) { padding-left: 20px; margin: 5px 0; }
+.md-body :deep(li) { margin: 2px 0; }
+.md-body :deep(li::marker) { color: var(--val-red); }
+.md-body :deep(p) { margin: 5px 0; }
+
+.md-body :deep(code) {
+  background: rgba(255, 70, 85, 0.08);
+  color: #ff8a95;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12.5px;
+  font-family: 'Consolas', 'Courier New', monospace;
+}
+
+.md-body :deep(pre) {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(90, 110, 127, 0.1);
+  border-radius: var(--val-radius-sm);
+  padding: 12px 16px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+
+.md-body :deep(pre code) { background: transparent; color: var(--val-text); padding: 0; }
+
+.md-body :deep(blockquote) {
+  border-left: 2px solid rgba(255, 70, 85, 0.3);
+  padding-left: 12px;
+  margin: 6px 0;
+  color: var(--val-text-dim);
+  font-style: italic;
+}
+
+.md-body :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: 12.5px;
+}
+
+.md-body :deep(th), .md-body :deep(td) {
+  border: 1px solid rgba(90, 110, 127, 0.15);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.md-body :deep(th) {
+  background: rgba(255, 70, 85, 0.06);
+  color: #ff8a95;
+  font-weight: 600;
+}
+
+.md-body :deep(hr) {
+  border: none;
+  border-top: 1px solid rgba(90, 110, 127, 0.08);
+  margin: 10px 0;
+}
+
+/* ============ TRANSITIONS ============ */
+.fade-enter-active, .fade-leave-active { transition: opacity 0.35s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+
+.msg-enter-active { transition: all 0.35s cubic-bezier(0.22, 1, 0.36, 1); }
+.msg-leave-active { transition: all 0.2s ease-in; }
+.msg-enter-from { opacity: 0; transform: translateY(20px); }
+.msg-leave-to { opacity: 0; transform: translateX(20px); }
+
+/* ============ RESPONSIVE ============ */
+@media (max-width: 768px) {
+  .kb-sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 200;
+    box-shadow: 6px 0 40px rgba(0, 0, 0, 0.5);
+  }
+  .kb-sidebar:not(.open) { transform: translateX(-100%); width: 280px; min-width: 280px; }
+  .chat-container.sidebarActive { margin-left: 0; }
+  .chat-header { padding: 10px 14px; }
+  .chat-main { padding: 14px; }
+  .chat-footer { padding: 10px 14px 12px; }
+  .msg-body { max-width: 85%; }
+  .brand-text h1 { font-size: 15px; }
+  .brand-text p { display: none; }
+  .hero-title { font-size: 20px; }
+  .quick-grid { grid-template-columns: 1fr; }
+  .connection-badge .badge-label { display: none; }
+}
+</style>
+

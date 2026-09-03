@@ -1,61 +1,152 @@
 # 【分工3写】向量入库/检索逻辑
+import os
+# 设置 HuggingFace 镜像，解决国内 SSL/网络问题（必须在 import sentence_transformers 之前设置）
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+os.environ.setdefault("CURL_CA_BUNDLE", "")
+import chromadb
+from sentence_transformers import SentenceTransformer
+from config.settings import VECTOR_DB_PATH, EMBEDDING_CONFIG
+from schemas.models import DocumentChunk, SearchResult
 
-from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
-from config.settings import LLM_CONFIG, SYSTEM_PROMPT, CHAT_CONFIG, FALLBACK_ANSWER
-from schemas.models import ChatMessage, SearchResult
-from utils.sensitive import filter_sensitive
-# 全局大模型实例
-llm = ChatOpenAI(
-    api_key=LLM_CONFIG["api_key"],
-    base_url=LLM_CONFIG["base_url"],
-    model=LLM_CONFIG["model_name"],
-    temperature=LLM_CONFIG["temperature"],
-    max_tokens=LLM_CONFIG["max_tokens"]
-)
-# -------------------------- 临时模拟检索，等分工3写完删掉这部分就行 --------------------------
-def mock_search(question: str, kb_id: str = "valorant", top_k: int = 3) -> list[SearchResult]:
-    """模拟分工3的检索接口，返回正确的游戏资料，后期直接换成真实调用"""
-    mock_data = [
-        SearchResult(
-            content="捷风（Jett）是无畏契约中的决斗者定位英雄，国籍韩国，技能包括：1. 上升气流（Q）：立即向上跃起；2. 顺风（E）：向移动方向冲刺一段距离；3. 逐风（C）：扔出烟雾弹；4. 飓刃（X）：召唤5把高精度飞刀，击杀敌人刷新飞刀。",
-            source="无畏契约英雄手册.docx",
-            score=0.92,
-            doc_id="doc_001"
-        ),
-        SearchResult(
-            content="捷风是高机动性决斗者，适合突破、拉枪线，常见技巧：E技能冲刺后急停开枪，Q技能升空不要原地停留容易被狙击，X飞刀适合中距离对枪。",
-            source="无畏契约进阶技巧.pdf",
-            score=0.87,
-            doc_id="doc_002"
+# -------------------------- 全局实例（懒加载，避免启动时卡住） --------------------------
+_embedding_model = None
+_chroma_client = None
+
+
+def _get_embedding_model():
+    """懒加载 bge-small-zh-v1.5 embedding 模型"""
+    global _embedding_model
+    if _embedding_model is None:
+        model_name = EMBEDDING_CONFIG["model_name"]
+        # bge 系列模型在 HuggingFace 上的完整路径是 BAAI/xxx，配置里写的是简写
+        if "/" not in model_name:
+            model_name = f"BAAI/{model_name}"
+        print(f"[向量引擎] 正在加载 Embedding 模型: {model_name} ...")
+        _embedding_model = SentenceTransformer(
+            model_name,
+            device=EMBEDDING_CONFIG["device"]
         )
-    ]
-    return mock_data
-# ----------------------------------------------------------------------------------------
-def chat_single_turn(session_id: str, question: str, kb_id: str = "valorant") -> tuple[str, list[dict]]:
+        print("[向量引擎] Embedding 模型加载完成")
+    return _embedding_model
+
+
+def _get_chroma_client():
+    """懒加载 ChromaDB 持久化客户端"""
+    global _chroma_client
+    if _chroma_client is None:
+        _chroma_client = chromadb.PersistentClient(path=VECTOR_DB_PATH)
+    return _chroma_client
+
+
+def _get_collection(kb_id: str):
+    """获取或创建指定知识库的 collection（用 cosine 距离）"""
+    client = _get_chroma_client()
+    return client.get_or_create_collection(
+        name=kb_id,
+        metadata={"hnsw:space": "cosine"}
+    )
+
+
+# -------------------------- 核心功能函数 --------------------------
+
+def add_chunks(chunks: list[DocumentChunk], kb_id: str = "valorant") -> bool:
     """
-    单轮问答核心逻辑
-    :return: (回答内容, 来源列表)
+    文档块批量存入向量库
+    :param chunks: 切好的文档块列表
+    :param kb_id: 知识库 ID（对应 ChromaDB 的 collection 名）
+    :return: 成功 True / 失败 False
     """
-    # 1. 敏感词校验
-    is_sensitive, filtered_q = filter_sensitive(question)
-    if is_sensitive:
-        return "你的问题包含敏感词，请重新提问~", []
-    # 2. 检索相关资料（现在用模拟，后期换成分工3的真实检索）
-    search_results = mock_search(question, kb_id)
-    # 3. 相似度判断，低于阈值返回兜底
-    if not search_results or max([r.score for r in search_results]) < CHAT_CONFIG["similarity_threshold"]:
-        return FALLBACK_ANSWER, []
-    # 4. 拼接提示词
-    context = "\n".join([f"参考资料{i+1}（来源：{r.source}）：{r.content}" for i, r in enumerate(search_results)])
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", SYSTEM_PROMPT + "\n请严格基于以下参考资料回答问题，不要编造内容：\n{context}"),
-        ("human", "{question}")
-    ])
-    # 5. 调用大模型
-    chain = prompt | llm
-    response = chain.invoke({"context": context, "question": question})
-    answer = response.content
-    # 6. 整理来源
-    sources = [{"name": r.source, "id": r.doc_id} for r in search_results]
-    return answer, sources
+    try:
+        if not chunks:
+            return False
+        model = _get_embedding_model()
+        collection = _get_collection(kb_id)
+
+        texts = [chunk.content for chunk in chunks]
+        metadatas = [chunk.metadata for chunk in chunks]
+        # 用 doc_id + 序号生成唯一 ID，避免重复
+        ids = []
+        for i, chunk in enumerate(chunks):
+            doc_id = chunk.metadata.get("doc_id", "unknown")
+            ids.append(f"{doc_id}_{i}")
+
+        # 生成 embedding 向量
+        embeddings = model.encode(texts, show_progress_bar=False).tolist()
+
+        # 存入 ChromaDB
+        collection.add(
+            embeddings=embeddings,
+            documents=texts,
+            metadatas=metadatas,
+            ids=ids
+        )
+        print(f"[向量引擎] 成功入库 {len(chunks)} 个文档块到知识库 [{kb_id}]")
+        return True
+    except Exception as e:
+        print(f"[向量引擎] 入库失败: {e}")
+        return False
+
+
+def search_vector(question: str, kb_id: str = "valorant", top_k: int = 3) -> list[SearchResult]:
+    """
+    语义检索：把问题转向量，在向量库中找最相似的文档块
+    :param question: 用户问题
+    :param kb_id: 知识库 ID
+    :param top_k: 返回前 K 条结果
+    :return: SearchResult 列表
+    """
+    try:
+        model = _get_embedding_model()
+        collection = _get_collection(kb_id)
+
+        # 如果集合为空，直接返回空列表
+        if collection.count() == 0:
+            return []
+
+        # 生成查询向量
+        query_embedding = model.encode([question], show_progress_bar=False).tolist()
+
+        # ChromaDB 检索
+        results = collection.query(
+            query_embeddings=query_embedding,
+            n_results=min(top_k, collection.count())
+        )
+
+        # 转换为 SearchResult
+        search_results = []
+        if results["documents"] and results["documents"][0]:
+            for i, doc in enumerate(results["documents"][0]):
+                metadata = results["metadatas"][0][i] if results["metadatas"] else {}
+                # cosine 距离转相似度分数: distance=0 → score=1.0
+                distance = results["distances"][0][i] if results["distances"] else 1.0
+                score = max(0.0, 1.0 - distance)
+
+                search_results.append(SearchResult(
+                    content=doc,
+                    source=metadata.get("doc_name", "未知文档"),
+                    score=round(score, 4),
+                    doc_id=metadata.get("doc_id", "unknown")
+                ))
+
+        return search_results
+    except Exception as e:
+        print(f"[向量引擎] 检索失败: {e}")
+        return []
+
+
+def delete_doc_vectors(doc_id: str, kb_id: str = "valorant") -> bool:
+    """
+    删除指定文档在向量库中的所有向量
+    :param doc_id: 文档 ID
+    :param kb_id: 知识库 ID
+    :return: 成功 True / 失败 False
+    """
+    try:
+        collection = _get_collection(kb_id)
+        # 通过 metadata 中的 doc_id 过滤删除
+        collection.delete(where={"doc_id": doc_id})
+        print(f"[向量引擎] 已删除文档 [{doc_id}] 的向量数据")
+        return True
+    except Exception as e:
+        print(f"[向量引擎] 删除失败: {e}")
+        return False

@@ -1,0 +1,29 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# IDE / editor
+.idea/
+.vscode/
+.vite/
+
+# Environment secrets
+.env
+.env.local
+
+# Runtime data / vector db / uploaded files
+data/
+backend/data/
+
+# Frontend build / deps
+frontend/node_modules/
+frontend/dist/
+
+# WorkBuddy / agent state
+.workbuddy/
+
+# OS junk
+Thumbs.db
+.DS_Store
