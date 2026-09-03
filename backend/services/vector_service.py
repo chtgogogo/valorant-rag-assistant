@@ -150,3 +150,19 @@ def delete_doc_vectors(doc_id: str, kb_id: str = "valorant") -> bool:
     except Exception as e:
         print(f"[向量引擎] 删除失败: {e}")
         return False
+
+
+def get_collection_stats(kb_id: str = "valorant") -> dict:
+    """获取指定知识库的向量规模统计，供前端展示"""
+    try:
+        collection = _get_collection(kb_id)
+        count = collection.count()
+        return {
+            "kb_id": kb_id,
+            "chunk_count": count,
+            "collection": kb_id
+        }
+    except Exception as e:
+        print(f"[向量引擎] 统计失败: {e}")
+        return {"kb_id": kb_id, "chunk_count": 0, "collection": kb_id}
+

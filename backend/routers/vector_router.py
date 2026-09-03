@@ -2,7 +2,7 @@
 from fastapi import APIRouter
 from typing import List
 from schemas.models import ApiResponse, DocumentChunk
-from services.vector_service import add_chunks, search_vector, delete_doc_vectors
+from services.vector_service import add_chunks, search_vector, delete_doc_vectors, get_collection_stats
 
 vector_router = APIRouter()
 
@@ -21,6 +21,14 @@ async def search_api(question: str, kb_id: str = "valorant", top_k: int = 3):
     """根据问题检索向量库，返回最相似的文档块"""
     results = search_vector(question, kb_id, top_k)
     return ApiResponse(data=[r.model_dump() for r in results])
+
+
+@vector_router.get("/stats", response_model=ApiResponse, summary="获取知识库向量统计")
+async def stats_api(kb_id: str = "valorant"):
+    """获取指定知识库的向量块数量等统计信息"""
+    stats = get_collection_stats(kb_id)
+    return ApiResponse(data=stats)
+
 
 
 @vector_router.delete("/delete_doc", response_model=ApiResponse, summary="删除文档对应向量")
