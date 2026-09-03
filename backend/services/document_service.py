@@ -6,7 +6,7 @@ import uuid
 from docx import Document as DocxDocument
 from pypdf import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from config.settings import UPLOAD_PATH, ALLOWED_EXTENSIONS
+from config.settings import UPLOAD_PATH, ALLOWED_EXTENSIONS, RAG_CONFIG
 from schemas.models import DocumentChunk
 from services.vector_service import add_chunks, delete_doc_vectors
 
@@ -97,13 +97,18 @@ def clean_text(text: str) -> str:
 
 # -------------------------- 文本拆分 --------------------------
 
-def split_text(text: str, chunk_size: int = 500, chunk_overlap: int = 50) -> list[str]:
+def split_text(text: str, chunk_size: int = None, chunk_overlap: int = None) -> list[str]:
     """
     用 LangChain 的递归字符拆分器切分文本
     :param chunk_size: 每块最大字符数
     :param chunk_overlap: 相邻块重叠字符数
     :return: 切好的文本块列表
     """
+    if chunk_size is None:
+        chunk_size = RAG_CONFIG["chunk_size"]
+    if chunk_overlap is None:
+        chunk_overlap = RAG_CONFIG["chunk_overlap"]
+
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
@@ -132,7 +137,7 @@ def upload_and_process(file_path: str, filename: str, kb_id: str = "valorant") -
         raise ValueError("文档内容为空，无法处理")
 
     # 3. 拆分文本
-    chunks_text = split_text(clean)
+    chunks_text = split_text(clean, RAG_CONFIG["chunk_size"], RAG_CONFIG["chunk_overlap"])
     if not chunks_text:
         raise ValueError("文本拆分失败，未生成任何文档块")
 

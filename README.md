@@ -1,7 +1,8 @@
-﻿# 无畏契约智能对话小助手
+# 无畏契约智能对话小助手
 
-基于 RAG（检索增强生成）的无畏契约（VALORANT）游戏知识智能问答系统。
+基于 RAG（检索增强生成）的无畏契约（VALORANT）游戏知识智能问答系统（v2.0 升级版）。
 后端用 FastAPI + LangChain + ChromaDB，前端用 Vue 3 + Element Plus，大模型接入智谱 GLM-4-Flash。
+升级内容：知识库管理页、权威资料/教程资源、RAG 配置集中化、来源相似度展示、可版本管理的 knowledge_base 知识源。
 
 ## 技术栈
 
@@ -33,6 +34,8 @@
 │   ├── schemas/models.py     # 数据模型
 │   ├── utils/sensitive.py    # 敏感词过滤
 │   └── requirements.txt      # Python 依赖
+│   ├── scripts/                 # 知识库重建、联网检索脚本
+
 ├── frontend/                 # 前端
 │   ├── src/
 │   │   ├── App.vue           # 根组件
@@ -42,10 +45,13 @@
 │   ├── public/               # 静态资源（头像图片等）
 │   ├── vite.config.js        # Vite 配置（含 API 代理）
 │   └── package.json          # Node 依赖
+├── knowledge_base/             # 可版本管理的知识库源文件（Markdown）
+├── docs/                       # 调研与升级方案
+
 ├── data/                     # 运行时数据（自动生成，不要手动删除）
 │   ├── chroma_db/            # 向量数据库
 │   ├── chat_history/         # 对话历史
-│   └── uploads/              # 知识库文档（4 份 md）
+│   └── uploads/              # 知识库文档（自动从 knowledge_base 同步）
 ├── .env                      # 环境变量（智谱 API 密钥）
 └── start.bat                 # 一键启动脚本
 ```
@@ -150,6 +156,9 @@ curl "http://127.0.0.1:8000/api/document/list?kb_id=valorant"
 # 向量检索（看检索到哪些文档块）
 curl -X POST "http://127.0.0.1:8000/api/vector/search?question=幻影&top_k=3"
 
+# 查看知识库向量统计
+curl "http://127.0.0.1:8000/api/vector/stats?kb_id=valorant"
+
 # 清空会话历史
 curl -X POST "http://127.0.0.1:8000/api/chat/clear?session_id=test001"
 ```
@@ -168,22 +177,31 @@ curl -X POST "http://127.0.0.1:8000/api/chat/clear?session_id=test001"
 | 来源追溯 | 每次回答展示参考文档来源 |
 | 撤回对话 | 支持回滚到历史某一轮 |
 | 文档管理 | 上传/删除知识库文档，自动解析入库 |
+| 知识库管理页 | 前端可上传/删除文档，查看向量规模 |
+| 来源相似度 | 答案下方展示参考文档及匹配相似度 |
+| 教程资源 | 内置官方资料导航、B站/抖音搜索入口、进阶战术文档 |
+
 
 ## 知识库
 
-项目预置了 4 份无畏契约游戏资料（位于 `data/uploads/`）：
+知识库源文件位于 `knowledge_base/`，运行时同步到 `backend/data/uploads/` 并向量化。当前预置：
 
 - 无畏契约英雄介绍.md
 - 无畏契约武器图鉴.md
 - 无畏契约地图攻略.md
 - 无畏契约新手攻略.md
+- 无畏契约权威数据与官方资料导航.md
+- 无畏契约进阶战术与阵容体系.md
+- 无畏契约枪械控制与训练方法.md
+- 无畏契约学习教程与视频资源.md
+
 
 如需更新知识库，有两种方式：
 
 1. 通过前端界面的文档管理页上传 `.txt` / `.md` / `.docx` / `.pdf` 文件
 2. 直接调用 API：`POST /api/document/upload`
 
-> 修改 md 文件后，需要重新索引才能让搜索生效。重新索引方法：删除 `data/chroma_db/` 目录后重启后端，或通过文档管理页重新上传。
+> 修改 `knowledge_base/` 下的 md 文件后，需要重建索引：运行 `重新索引.bat`，或在 `backend` 目录执行 `python scripts/init_knowledge_base.py`。该脚本会清空旧向量库、同步源文档并重新向量化。
 
 ## 四人分工
 

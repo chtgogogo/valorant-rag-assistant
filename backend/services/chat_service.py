@@ -3,7 +3,7 @@ import json
 import time
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
-from config.settings import LLM_CONFIG, SYSTEM_PROMPT, CHAT_CONFIG, FALLBACK_ANSWER, REFUSE_ANSWER
+from config.settings import LLM_CONFIG, SYSTEM_PROMPT, CHAT_CONFIG, RAG_CONFIG, FALLBACK_ANSWER, REFUSE_ANSWER
 from schemas.models import ChatMessage, SearchResult
 from utils.sensitive import filter_sensitive
 
@@ -35,7 +35,7 @@ def test_llm_call(question: str) -> str:
 # 自定义关键词规则，命中直接返回，不调用大模型
 CUSTOM_RULES = {
     "帮助": "我是无畏契约智能游戏助手，你可以问我：\n1. 英雄定位、技能、背景故事\n2. 武器属性、伤害、价格\n3. 地图点位、道具技巧\n4. 游戏玩法、上分技巧",
-    "版本": "无畏契约智能助手 v1.0 | 毕业实训项目版",
+    "版本": "无畏契约智能助手 v2.0 | 毕业实训升级版（RAG增强+知识库管理+教程资源）",
     "你好": "你好呀！我是无畏契约专属小助手，有什么游戏问题都可以问我~",
     "谢谢": "不客气！祝你游戏愉快，把把五杀😎"
 }
@@ -72,10 +72,12 @@ def rollback_history(session_id: str, turn_index: int) -> bool:
     save_history(session_id, new_history)
     return True
 # -------------------------- 检索部分（已对接分工3真实检索） --------------------------
-def search_docs(question: str, kb_id: str = "valorant", top_k: int = 3) -> list[SearchResult]:
+def search_docs(question: str, kb_id: str = "valorant", top_k: int = None) -> list[SearchResult]:
     """
     检索文档，调用分工3的向量检索引擎
     """
+    if top_k is None:
+        top_k = RAG_CONFIG["top_k"]
     from services.vector_service import search_vector
     return search_vector(question, kb_id, top_k)
 # ----------------------------------------------------------------------------------------
@@ -109,7 +111,7 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = "valorant") ->
     # 4. 检索资料
     search_results = search_docs(question, kb_id)
     # 5. 低相似度兜底
-    if not search_results or max([r.score for r in search_results]) < CHAT_CONFIG["similarity_threshold"]:
+    if not search_results or max([r.score for r in search_results]) < RAG_CONFIG["score_threshold"]:
         answer = FALLBACK_ANSWER
         sources = []
     else:
@@ -129,7 +131,12 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = "valorant") ->
         prompt = ChatPromptTemplate.from_messages(messages)
         # 7. 带重试调用大模型
         answer = _call_llm_with_retry(prompt, {"question": question})
-        sources = [{"name": r.source, "id": r.doc_id} for r in search_results]
+        sources = [
+            {"name": r.source, "id": r.doc_id, "score": r.score}
+            for r in search_results
+        ] if RAG_CONFIG.get("enable_source_score", True) else [
+            {"name": r.source, "id": r.doc_id} for r in search_results
+        ]
     # 8. 更新历史
     history.append(ChatMessage(role="user", content=question))
     history.append(ChatMessage(role="assistant", content=answer))

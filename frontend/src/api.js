@@ -33,4 +33,34 @@ export function testChat() {
   return api.get('/chat/test')
 }
 
+// 知识库文档管理
+export function listDocuments(kbId = 'valorant') {
+  return api.get('/document/list', {
+    params: { kb_id: kbId },
+  })
+}
+
+export function uploadDocument(file, kbId = 'valorant') {
+  const formData = new FormData()
+  formData.append('file', file)
+  return api.post('/document/upload', formData, {
+    params: { kb_id: kbId },
+    timeout: 180000,
+  })
+}
+
+export function deleteDocument(docId, kbId = 'valorant') {
+  return api.delete('/document/delete', {
+    params: { doc_id: docId, kb_id: kbId },
+  })
+}
+
+// 向量库统计
+export function getVectorStats(kbId = 'valorant') {
+  return api.get('/vector/stats', {
+    params: { kb_id: kbId },
+  })
+}
+
+
 export default api

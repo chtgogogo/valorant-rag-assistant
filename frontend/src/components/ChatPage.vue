@@ -1,4 +1,4 @@
-﻿<template>
+<template>
    <div class="app-layout">
      <!-- 知识库侧边栏 -->
      <aside class="kb-sidebar" :class="{ open: sidebarOpen }">
@@ -66,6 +66,8 @@
              <span class="badge-dot"></span>
              <span class="badge-label">{{ backendOnline ? '已连接' : '未连接' }}</span>
            </div>
+            <button class="tool-btn tool-btn-text" @click="emit('manage')" title="知识库管理">知识库</button>
+
            <button class="tool-btn" @click="handleClear" :disabled="loading" title="清空对话">
              <svg viewBox="0 0 24 24" class="tool-icon"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
            </button>
@@ -126,7 +128,7 @@
             </div>
             <div v-if="msg.sources && msg.sources.length > 0" class="msg-footnotes">
               <span class="fn-label">参考</span>
-              <span class="fn-tag" v-for="src in msg.sources" :key="src.id">{{ src.name }}</span>
+              <span class="fn-tag" v-for="src in msg.sources" :key="src.id">{{ src.name }}<span v-if="src.score" class="fn-score"> {{ Math.round(src.score * 100) }}%</span></span>
             </div>
             <div class="msg-time">{{ msg.time }}</div>
           </div>
@@ -186,6 +188,9 @@ import { ref, nextTick, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Marked } from 'marked'
 import { sendMessage, clearHistory, rollbackHistory, testChat } from '../api.js'
+
+const emit = defineEmits(['manage'])
+
 
 // ---- 状态 ----
  const messages = ref([])
@@ -837,6 +842,13 @@ async function handleRollback() {
   cursor: not-allowed;
 }
 
+.tool-btn-text {
+  padding: 7px 12px;
+  min-width: auto;
+  font-weight: 600;
+}
+
+
 .tool-icon { width: 15px; height: 15px; }
 
 /* ============ MESSAGES AREA ============ */
@@ -1015,6 +1027,12 @@ async function handleRollback() {
   padding: 2px 8px;
   border-radius: 8px;
 }
+
+.fn-score {
+  opacity: 0.75;
+  margin-left: 2px;
+}
+
 
 .msg-time {
   font-size: 10px;
