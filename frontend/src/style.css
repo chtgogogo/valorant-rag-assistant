@@ -1,0 +1,27 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
+}
+
+#app {
+  height: 100%;
+}
+
+/* 无畏契约深色主题 */
+:root {
+  --val-red: #ff4655;
+  --val-red-dark: #bd3944;
+  --val-bg: #0f1923;
+  --val-bg-light: #1a2733;
+  --val-bg-card: #1e2d3a;
+  --val-text: #e8edf2;
+  --val-text-dim: #8b9bab;
+  --val-border: #2a3a4a;
+  --val-accent: #00d4ff;
+}
