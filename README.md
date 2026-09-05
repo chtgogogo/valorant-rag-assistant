@@ -1,8 +1,25 @@
-# 无畏契约智能对话小助手
+# 无畏契约 · 智能问答助手（VALORANT RAG Assistant）
 
-基于 RAG（检索增强生成）的无畏契约（VALORANT）游戏知识智能问答系统（v2.0 升级版）。
-后端用 FastAPI + LangChain + ChromaDB，前端用 Vue 3 + Element Plus，大模型接入智谱 GLM-4-Flash。
-升级内容：知识库管理页、权威资料/教程资源、RAG 配置集中化、来源相似度展示、可版本管理的 knowledge_base 知识源。
+> 把散落在网页、图鉴、教程里的游戏知识，收进一个可版本管理的知识库，让 AI 边检索边回答，每条结论都指得出出处。
+
+一个开箱即用的游戏知识 RAG（检索增强生成）系统。后端 FastAPI + LangChain + ChromaDB，前端 Vue 3 + Element Plus，大模型接入智谱 GLM-4-Flash。核心价值不是「能聊天」，而是**回答有依据、来源可追溯、知识可维护**。
+
+---
+
+## 它解决什么
+
+玩家查「捷风怎么玩」「幻影弹道怎么样」「这张图怎么打」，往往要翻十几个网页、B 站视频和文档，信息零散、版本滞后、真假难辨。这个项目把 VALORANT 资料统一收口成结构化知识库，用 RAG 让大模型先检索再作答，把「拍脑袋回答」变成「查完资料再回答」。
+
+## 核心亮点
+
+| 能力 | 说明 |
+|------|------|
+| 检索增强问答 | 先向量检索知识库，再交给 GLM 生成，降低幻觉 |
+| 来源可追溯 | 每条回答展示命中的文档块与匹配相似度 |
+| 多轮记忆 | 支持上下文追问、回滚到历史某一轮 |
+| 知识库管理 | 前端上传/删除文档，自动解析、切分、向量化 |
+| 安全兜底 | 敏感词过滤 + 无关问题自动拒答 |
+| 一键启动 | `start.bat` 同时拉起前后端 |
 
 ## 技术栈
 
@@ -11,203 +28,93 @@
 | 后端框架 | FastAPI + Uvicorn |
 | 大语言模型 | 智谱 GLM-4-Flash |
 | RAG 框架 | LangChain |
-| Embedding | BAAI/bge-small-zh-v1.5（sentence-transformers） |
+| 向量模型 | BAAI/bge-small-zh-v1.5 |
 | 向量数据库 | ChromaDB |
 | 前端 | Vue 3 + Element Plus + Vite |
 | Markdown 渲染 | marked |
 
-## 项目结构
-
-```
-实训毕设无畏契约智能对话小助手/
-├── backend/                  # 后端
-│   ├── main.py               # FastAPI 入口
-│   ├── config/settings.py    # 配置文件（模型、路径、提示词）
-│   ├── routers/              # 路由层
-│   │   ├── chat_router.py    # 对话接口
-│   │   ├── document_router.py# 文档管理接口
-│   │   └── vector_router.py  # 向量检索接口
-│   ├── services/             # 业务逻辑层
-│   │   ├── chat_service.py   # 对话业务（RAG、多轮记忆、敏感词过滤）
-│   │   ├── document_service.py# 文档解析、切分、入库
-│   │   └── vector_service.py # Embedding、向量检索
-│   ├── schemas/models.py     # 数据模型
-│   ├── utils/sensitive.py    # 敏感词过滤
-│   └── requirements.txt      # Python 依赖
-│   ├── scripts/                 # 知识库重建、联网检索脚本
-
-├── frontend/                 # 前端
-│   ├── src/
-│   │   ├── App.vue           # 根组件
-│   │   ├── components/       # 页面组件（ChatPage 等）
-│   │   ├── api.js            # 后端接口封装
-│   │   └── style.css         # 全局样式
-│   ├── public/               # 静态资源（头像图片等）
-│   ├── vite.config.js        # Vite 配置（含 API 代理）
-│   └── package.json          # Node 依赖
-├── knowledge_base/             # 可版本管理的知识库源文件（Markdown）
-├── docs/                       # 调研与升级方案
-
-├── data/                     # 运行时数据（自动生成，不要手动删除）
-│   ├── chroma_db/            # 向量数据库
-│   ├── chat_history/         # 对话历史
-│   └── uploads/              # 知识库文档（自动从 knowledge_base 同步）
-├── .env                      # 环境变量（智谱 API 密钥）
-└── start.bat                 # 一键启动脚本
-```
-
-## 环境要求
-
-| 环境 | 版本 |
-|------|------|
-| Python | >= 3.12 |
-| Node.js | >= 22 |
-| npm | >= 10 |
-
-## 安装步骤
-
-### 1. 配置 API 密钥
-
-在项目根目录创建 `.env` 文件：
-
-```env
-ZHIPU_API_KEY=你的智谱API密钥
-```
-
-> 密钥去智谱开放平台 https://open.bigmodel.cn/ 注册领取。
-
-### 2. 安装后端依赖
+## 一分钟跑起来
 
 ```bash
-cd backend
+# 1. 配置 API 密钥（智谱开放平台 https://open.bigmodel.cn/ 领取）
+echo "ZHIPU_API_KEY=你的密钥" > .env
 
-# 创建虚拟环境（推荐）
+# 2. 安装后端
+cd backend
 python -m venv .venv
-
-# 激活虚拟环境
-# Windows:
-.venv\Scripts\activate
-# macOS/Linux:
-source .venv/bin/activate
-
-# 安装依赖
+# Windows: .venv\Scripts\activate   macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-```
 
-### 3. 安装前端依赖
-
-```bash
-cd frontend
+# 3. 安装前端（另开终端）
+cd ../frontend
 npm install
+
+# 4. 启动（Windows 可直接双击根目录 start.bat）
+cd ../backend && python main.py   # 终端 1：后端 :8000
+cd ../frontend && npm run dev     # 终端 2：前端 :5173
 ```
 
-## 启动项目
+浏览器打开 **http://localhost:5173**。首次启动会自动下载 embedding 模型（约 92MB，已配置国内镜像加速）。
 
-### 方式一：一键启动（Windows）
+## 架构
 
-双击项目根目录的 `start.bat`，会自动打开后端和前端两个命令行窗口。
-
-### 方式二：手动启动（推荐）
-
-需要开两个终端，后端必须先启动。
-
-**终端 1 - 启动后端：**
-
-```bash
-cd backend
-python main.py
+```
+Vue3 前端（对话页 / 知识库管理页）
+   │ HTTP /api/*
+   ▼
+FastAPI 后端
+   ├─ routers   接口层（chat / document / vector）
+   ├─ services  业务层（RAG 编排 / 多轮记忆 / 敏感词 / 文档解析）
+   ├─ schemas   Pydantic 数据校验
+   └─ config    模型、路径、提示词集中配置
+   │
+   ├─ ChromaDB（向量库）
+   └─ 智谱 GLM-4-Flash（生成）
 ```
 
-看到 `Uvicorn running on http://0.0.0.0:8000` 表示启动成功。
+## 它是怎么工作的
 
-**终端 2 - 启动前端：**
+1. **入库**：`knowledge_base/` 下的 Markdown → 解析切分 → `bge-small-zh-v1.5` 向量化 → 写入 ChromaDB。
+2. **问答**：用户提问 → 向量检索 top-k 相关文档块 → 拼成上下文 → 交给 GLM 生成。
+3. **追溯**：回答下方展示参考文档与相似度，知道「这句话来自哪」。
 
-```bash
-cd frontend
-npm run dev
-```
-
-看到 `Local: http://localhost:5173/` 表示启动成功。
-
-### 访问地址
-
-| 入口 | 地址 |
-|------|------|
-| 前端页面（主要使用） | http://localhost:5173 |
-| 后端 API 文档（Swagger） | http://127.0.0.1:8000/docs |
-
-浏览器打开 **http://localhost:5173** 即可使用对话小助手。
-
-> 首次启动后端时会自动下载 bge-small-zh-v1.5 模型（约 92MB），请耐心等待。项目已配置 hf-mirror.com 镜像加速下载。
-
-## 命令行模式（API 直接调用）
-
-不想开前端时，可以直接用 curl 调用后端 API：
-
-```bash
-# 发送对话
-curl -X POST "http://127.0.0.1:8000/api/chat/send" ^
-     -H "Content-Type: application/json" ^
-     -d "{\"question\":\"介绍一下捷风\",\"session_id\":\"test001\"}"
-
-# 查看知识库文档列表
-curl "http://127.0.0.1:8000/api/document/list?kb_id=valorant"
-
-# 向量检索（看检索到哪些文档块）
-curl -X POST "http://127.0.0.1:8000/api/vector/search?question=幻影&top_k=3"
-
-# 查看知识库向量统计
-curl "http://127.0.0.1:8000/api/vector/stats?kb_id=valorant"
-
-# 清空会话历史
-curl -X POST "http://127.0.0.1:8000/api/chat/clear?session_id=test001"
-```
-
-> Windows 的 curl 用 `^` 换行，Linux/macOS 用 `\`。
-
-## 功能说明
+## 功能清单
 
 | 功能 | 说明 |
 |------|------|
-| 智能问答 | 基于知识库的无畏契约游戏问题解答 |
-| 多轮对话 | 支持上下文记忆，连续追问 |
-| Markdown 渲染 | 回答支持加粗、列表、代码块、表格等格式 |
+| 智能问答 | 基于知识库的 VALORANT 问题解答 |
+| 多轮对话 | 上下文记忆，连续追问 |
+| Markdown 渲染 | 加粗、列表、代码块、表格 |
 | 敏感词过滤 | 自动拦截不文明用语 |
 | 无关拒答 | 非游戏问题自动拒绝 |
-| 来源追溯 | 每次回答展示参考文档来源 |
-| 撤回对话 | 支持回滚到历史某一轮 |
-| 文档管理 | 上传/删除知识库文档，自动解析入库 |
-| 知识库管理页 | 前端可上传/删除文档，查看向量规模 |
-| 来源相似度 | 答案下方展示参考文档及匹配相似度 |
-| 教程资源 | 内置官方资料导航、B站/抖音搜索入口、进阶战术文档 |
+| 来源追溯 | 每次回答展示参考来源 |
+| 撤回对话 | 回滚到历史某一轮 |
+| 文档管理 | 上传/删除文档，自动解析入库 |
+| 知识库管理页 | 前端可视化上传、查看向量规模 |
+| 教程资源 | 官方资料导航、B 站/抖音搜索入口、进阶战术文档 |
 
+## 项目结构
 
-## 知识库
+```
+├── backend/            # FastAPI 后端（routers/services/schemas/scripts）
+├── frontend/           # Vue3 前端（components/api/views）
+├── knowledge_base/     # 可版本管理的知识源（Markdown）
+├── docs/               # 调研与升级方案
+├── data/               # 运行时数据（chroma_db / chat_history / uploads，自动生成）
+├── start.bat           # 一键启动
+└── 重新索引.bat         # 重建向量索引
+```
 
-知识库源文件位于 `knowledge_base/`，运行时同步到 `backend/data/uploads/` 并向量化。当前预置：
+## 更新知识库
 
-- 无畏契约英雄介绍.md
-- 无畏契约武器图鉴.md
-- 无畏契约地图攻略.md
-- 无畏契约新手攻略.md
-- 无畏契约权威数据与官方资料导航.md
-- 无畏契约进阶战术与阵容体系.md
-- 无畏契约枪械控制与训练方法.md
-- 无畏契约学习教程与视频资源.md
+1. 前端文档管理页上传 `.txt / .md / .docx / .pdf`；
+2. 或调用 `POST /api/document/upload`；
+3. 改了 `knowledge_base/` 下的 md 后，运行 `重新索引.bat`（或 `python backend/scripts/init_knowledge_base.py`）重建索引。
 
+## 当前进展
 
-如需更新知识库，有两种方式：
+- v2.0：知识库管理页、权威资料/教程资源、RAG 配置集中化、来源相似度展示、可版本管理的知识源。
 
-1. 通过前端界面的文档管理页上传 `.txt` / `.md` / `.docx` / `.pdf` 文件
-2. 直接调用 API：`POST /api/document/upload`
+## 许可证
 
-> 修改 `knowledge_base/` 下的 md 文件后，需要重建索引：运行 `重新索引.bat`，或在 `backend` 目录执行 `python scripts/init_knowledge_base.py`。该脚本会清空旧向量库、同步源文档并重新向量化。
-
-## 四人分工
-
-| 分工 | 姓名 | 职责 |
-|------|------|------|
-| 分工一 | 刘慧鹏 | 前端交互与页面开发：知识库管理页、文档管理页、对话聊天页、路由与状态管理、接口对接 |
-| 分工二 | 周末 | 知识库文档管理：文档上传解析、多格式支持、文本清洗与拆分切块、文档 CRUD |
-| 分工三 | 戴鸿 | 向量引擎与检索优化：向量化入库、语义检索、向量去重、纠错与意图识别 |
-| 分工四 | 曹灏天 | 对话业务与答案增强：RAG 流程编排、LLM 对话、多轮记忆、敏感词过滤、兜底话术、前端聊天页 |
+仓库暂未附 LICENSE 文件；如需公开分发，建议补充 MIT 协议。
