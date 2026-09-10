@@ -1,0 +1,78 @@
+# 【新增 v3.0】重排序（Rerank）：两阶段检索的第二阶段
+# ------------------------------------------------------------
+# 参考网易有道 QAnything 的两阶段架构：
+#   第一阶段（召回）：混合检索粗选出 top 10 候选，保证"不漏"
+#   第二阶段（精排）：CrossEncoder 对"问题-候选"逐对深度打分，保证"排对"
+# bge-reranker-base 本地运行无需密钥；任何失败自动降级为召回排序。
+# ------------------------------------------------------------
+import math
+import os
+
+# HuggingFace 镜像与缓存位置（必须在 import sentence_transformers 之前设置）
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+
+from sentence_transformers import CrossEncoder
+
+from config.settings import RAG_CONFIG, EMBEDDING_CONFIG
+from schemas.models import SearchResult
+
+import logging
+logger = logging.getLogger(__name__)
+
+_cross_encoder = None
+
+
+def _get_cross_encoder() -> CrossEncoder:
+    """懒加载 bge-reranker 模型（首次调用时从 hf-mirror 下载到 HF_HOME 缓存）"""
+    global _cross_encoder
+    if _cross_encoder is None:
+        model_name = RAG_CONFIG["rerank_model"]
+        if "/" not in model_name:
+            model_name = f"BAAI/{model_name}"
+        print(f"[重排序] 正在加载 Rerank 模型: {model_name} ...")
+        _cross_encoder = CrossEncoder(
+            model_name,
+            device=EMBEDDING_CONFIG["device"],
+            max_length=512,
+        )
+        print("[重排序] Rerank 模型加载完成")
+    return _cross_encoder
+
+
+def rerank(question: str, candidates: list[SearchResult],
+           top_k: int = None) -> list[SearchResult]:
+    """
+    对召回候选精排：CrossEncoder 逐对打分 → sigmoid 归一到 0~1 → 取 top_k
+    :param question: （改写后的）用户问题
+    :param candidates: 混合召回的候选块
+    :param top_k: 最终保留条数（默认 RAG_CONFIG.top_k）
+    :return: 精排后的 SearchResult 列表（score 字段 = rerank 置信分）
+             模型未启用或调用失败时，原样截断返回（降级不阻塞）
+    """
+    if top_k is None:
+        top_k = RAG_CONFIG["top_k"]
+    if not candidates:
+        return []
+    if not RAG_CONFIG.get("enable_rerank", True):
+        return candidates[:top_k]
+
+    # 候选太多时先截断，控制 CPU 推理耗时
+    candidates = candidates[: RAG_CONFIG["rerank_candidates"]]
+
+    try:
+        model = _get_cross_encoder()
+        pairs = [(question, c.content) for c in candidates]
+        raw_scores = model.predict(pairs, show_progress_bar=False)
+        # bge-reranker 输出 logit，过 sigmoid 转成 0~1 的置信分
+        scores = [1.0 / (1.0 + math.exp(-float(s))) for s in raw_scores]
+
+        for c, s in zip(candidates, scores):
+            c.score = round(s, 4)
+
+        ranked = sorted(candidates, key=lambda r: r.score, reverse=True)[:top_k]
+        logger.info("重排序完成: %d 个候选 → 取前 %d，top1 分数 %.3f",
+                    len(candidates), len(ranked), ranked[0].score if ranked else 0)
+        return ranked
+    except Exception as e:
+        logger.warning("重排序失败(降级为召回排序): %s", e)
+        return candidates[:top_k]

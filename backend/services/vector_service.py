@@ -1,8 +1,12 @@
 # 【分工3写】向量入库/检索逻辑
+import logging
 import os
 # 设置 HuggingFace 镜像，解决国内 SSL/网络问题（必须在 import sentence_transformers 之前设置）
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 os.environ.setdefault("CURL_CA_BUNDLE", "")
+# chromadb 0.5.5 的遥测与 posthog 不兼容会刷无害报错，直接静音
+logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.CRITICAL)
+logging.getLogger("chromadb.telemetry.segment").setLevel(logging.CRITICAL)
 import chromadb
 from sentence_transformers import SentenceTransformer
 from config.settings import VECTOR_DB_PATH, EMBEDDING_CONFIG

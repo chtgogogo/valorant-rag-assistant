@@ -14,8 +14,9 @@ class DocumentChunk(BaseModel):
 class SearchResult(BaseModel):
     content: str  # 匹配到的文本
     source: str  # 来源文档名
-    score: float  # 相似度分数
+    score: float  # 排序分数（rerank 分 / RRF 分 / 余弦相似度，随管线阶段变化）
     doc_id: str  # 文档ID
+    dense_score: Optional[float] = None  # 向量余弦相似度（混合检索保留，供兜底阈值判断）
 # 对话消息结构（分工4存历史必须用这个格式）
 class ChatMessage(BaseModel):
     role: str  # 只能是 user / assistant

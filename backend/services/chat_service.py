@@ -3,9 +3,13 @@ import json
 import time
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
-from config.settings import LLM_CONFIG, SYSTEM_PROMPT, CHAT_CONFIG, RAG_CONFIG, FALLBACK_ANSWER, REFUSE_ANSWER
+from config.settings import (
+    LLM_CONFIG, SYSTEM_PROMPT, CHAT_CONFIG, RAG_CONFIG,
+    FALLBACK_ANSWER, REFUSE_ANSWER, CUSTOM_RULES, DEFAULT_KB_ID,
+)
 from schemas.models import ChatMessage, SearchResult
 from utils.sensitive import filter_sensitive
+from utils.audit import log_qa
 
 import logging
 logging.basicConfig(
@@ -32,13 +36,6 @@ def test_llm_call(question: str) -> str:
     ])
     return _call_llm_with_retry(prompt, {"question": question})
 
-# 自定义关键词规则，命中直接返回，不调用大模型
-CUSTOM_RULES = {
-    "帮助": "我是无畏契约智能游戏助手，你可以问我：\n1. 英雄定位、技能、背景故事\n2. 武器属性、伤害、价格\n3. 地图点位、道具技巧\n4. 游戏玩法、上分技巧",
-    "版本": "无畏契约智能助手 v2.0 | 毕业实训升级版（RAG增强+知识库管理+教程资源）",
-    "你好": "你好呀！我是无畏契约专属小助手，有什么游戏问题都可以问我~",
-    "谢谢": "不客气！祝你游戏愉快，把把五杀😎"
-}
 # -------------------------- 记忆相关工具函数 --------------------------
 def _get_history_path(session_id: str) -> str:
     return os.path.join(CHAT_CONFIG["history_path"], f"{session_id}.json")
@@ -71,16 +68,65 @@ def rollback_history(session_id: str, turn_index: int) -> bool:
     new_history = history[:turn_index]
     save_history(session_id, new_history)
     return True
-# -------------------------- 检索部分（已对接分工3真实检索） --------------------------
-def search_docs(question: str, kb_id: str = "valorant", top_k: int = None) -> list[SearchResult]:
+# -------------------------- 检索管线（v3.0：改写→混合召回→重排） --------------------------
+def _retrieve(question: str, history: list[ChatMessage], kb_id: str) -> tuple[str, list[SearchResult]]:
     """
-    检索文档，调用分工3的向量检索引擎
+    三级检索管线：
+      1. 查询改写：把"它的伤害多少"这类指代问题改写成独立完整问题
+      2. 混合召回：BM25 关键词 + 向量语义双路召回，RRF 融合
+      3. 重排序：CrossEncoder 精排取 top_k
+    :return: (实际用于检索的问题, 精排后的结果列表)
     """
-    if top_k is None:
-        top_k = RAG_CONFIG["top_k"]
-    from services.vector_service import search_vector
-    return search_vector(question, kb_id, top_k)
-# ----------------------------------------------------------------------------------------
+    from services.query_rewriter import rewrite_query
+    from services.hybrid_retriever import hybrid_search
+    from services.reranker import rerank
+
+    rewritten = rewrite_query(question, history)
+    candidates = hybrid_search(rewritten, kb_id)
+    results = rerank(rewritten, candidates)
+    return rewritten, results
+
+
+def _should_fallback(results: list[SearchResult]) -> bool:
+    """兜底判断：检索结果为空，或最高置信分低于阈值（阈值随管线模式切换）"""
+    if not results:
+        return True
+    if RAG_CONFIG.get("enable_rerank", True):
+        return results[0].score < RAG_CONFIG["rerank_score_threshold"]
+    # 无 rerank 时退回向量余弦相似度阈值（兼容旧管线）
+    best = max((r.dense_score if r.dense_score is not None else r.score) for r in results)
+    return best < RAG_CONFIG["score_threshold"]
+
+
+def _build_sources(results: list[SearchResult]) -> list[dict]:
+    return [
+        {"name": r.source, "id": r.doc_id, "score": r.score}
+        for r in results
+    ] if RAG_CONFIG.get("enable_source_score", True) else [
+        {"name": r.source, "id": r.doc_id}
+        for r in results
+    ]
+
+
+def _build_rag_messages(history: list[ChatMessage], results: list[SearchResult], question: str) -> ChatPromptTemplate:
+    """拼 RAG 提示词：系统提示 + 参考资料 + 历史 + 最新问题"""
+    context = "\n".join(
+        [f"参考资料{i+1}（来源：{r.source}）：{r.content}" for i, r in enumerate(results)]
+    )
+    messages = [
+        ("system", SYSTEM_PROMPT + f"""
+请严格基于参考资料和历史对话回答问题，遵守以下规则：
+1. 参考资料：{context}
+2. 如果问题与无畏契约游戏完全无关（如写代码、做菜、天气、闲聊等日常请求），即使参考资料里出现了相关字样，也必须直接返回：{REFUSE_ANSWER}
+3. 参考资料里没有的内容不要编造，直接返回兜底话术
+"""),
+    ]
+    for msg in history:
+        messages.append((msg.role, msg.content))
+    messages.append(("human", "{question}"))
+    return ChatPromptTemplate.from_messages(messages)
+
+
 def _call_llm_with_retry(prompt, inputs, max_retry=2):
     """大模型调用带重试：失败自动重试，最终失败返回友好提示（真实错误已写入日志）"""
     for i in range(max_retry + 1):
@@ -93,11 +139,20 @@ def _call_llm_with_retry(prompt, inputs, max_retry=2):
             if i == max_retry:
                 return "抱歉，当前服务有点忙，请稍后再试~"
             time.sleep(1)  # 等1秒后重试
-def chat_single_turn(session_id: str, question: str, kb_id: str = "valorant") -> tuple[str, list[dict], list[ChatMessage]]:
+
+
+def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple[str, list[dict], list[ChatMessage]]:
+    """单轮问答主流程（v3.0 管线），返回 (答案, 来源, 最新历史)"""
+    kb_id = kb_id or DEFAULT_KB_ID
+    start_time = time.time()
+
     # 1. 敏感词校验
     is_sensitive, filtered_q = filter_sensitive(question)
     if is_sensitive:
-        return "你的问题包含敏感词，请重新提问~", [], load_history(session_id)
+        answer = "你的问题包含敏感词，请重新提问~"
+        log_qa(session_id, question, question, [], answer, (time.time() - start_time) * 1000, kb_id, "sensitive_block")
+        return answer, [], load_history(session_id)
+
     # 2. 自定义关键词规则优先
     for keyword, reply in CUSTOM_RULES.items():
         if keyword in question:
@@ -106,39 +161,95 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = "valorant") ->
             history.append(ChatMessage(role="assistant", content=reply))
             save_history(session_id, history)
             return reply, [], history
+
     # 3. 加载历史
     history = load_history(session_id)
-    # 4. 检索资料
-    search_results = search_docs(question, kb_id)
-    # 5. 低相似度兜底
-    if not search_results or max([r.score for r in search_results]) < RAG_CONFIG["score_threshold"]:
+
+    # 4~6. 三级检索管线：改写 → 混合召回 → 重排
+    rewritten, results = _retrieve(question, history, kb_id)
+    pipeline_desc = ("hybrid+rerank" if RAG_CONFIG.get("enable_rerank") else "hybrid") \
+        if RAG_CONFIG.get("enable_hybrid_search") else "vector"
+
+    # 7. 低置信兜底
+    if _should_fallback(results):
         answer = FALLBACK_ANSWER
         sources = []
     else:
-        # 6. 拼提示词（加拒答规则）
-        context = "\n".join([f"参考资料{i+1}（来源：{r.source}）：{r.content}" for i, r in enumerate(search_results)])
-        messages = [
-            ("system", SYSTEM_PROMPT + f"""
-请严格基于参考资料和历史对话回答问题，遵守以下规则：
-1. 参考资料：{context}
-2. 如果问题和无畏契约游戏完全无关，直接返回：{REFUSE_ANSWER}
-3. 参考资料里没有的内容不要编造，直接返回兜底话术
-"""),
-        ]
-        for msg in history:
-            messages.append((msg.role, msg.content))
-        messages.append(("human", "{question}"))
-        prompt = ChatPromptTemplate.from_messages(messages)
-        # 7. 带重试调用大模型
+        # 8. 拼提示词（加拒答规则），带重试调用大模型
+        prompt = _build_rag_messages(history, results, question)
         answer = _call_llm_with_retry(prompt, {"question": question})
-        sources = [
-            {"name": r.source, "id": r.doc_id, "score": r.score}
-            for r in search_results
-        ] if RAG_CONFIG.get("enable_source_score", True) else [
-            {"name": r.source, "id": r.doc_id} for r in search_results
-        ]
-    # 8. 更新历史
+        sources = _build_sources(results)
+
+    # 9. 更新历史 + 审计留痕
     history.append(ChatMessage(role="user", content=question))
     history.append(ChatMessage(role="assistant", content=answer))
     save_history(session_id, history)
+    log_qa(session_id, question, rewritten, sources, answer,
+           (time.time() - start_time) * 1000, kb_id, pipeline_desc)
     return answer, sources, history
+
+
+def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
+    """
+    流式问答主流程（生成器）：先产出检索来源，再逐 token 产出答案。
+    统一 yield 事件字典：
+      {"type": "sources", "sources": [...]}
+      {"type": "token",   "delta": "..."}
+      {"type": "done",    "answer": "...", "history": [...]}
+    """
+    kb_id = kb_id or DEFAULT_KB_ID
+    start_time = time.time()
+
+    # 敏感词 / 关键词规则 / 兜底：这些场景没有流式生成过程，一次性给出
+    is_sensitive, _ = filter_sensitive(question)
+    if is_sensitive:
+        answer = "你的问题包含敏感词，请重新提问~"
+        yield {"type": "token", "delta": answer}
+        yield {"type": "done", "answer": answer, "history": load_history(session_id)}
+        return
+
+    for keyword, reply in CUSTOM_RULES.items():
+        if keyword in question:
+            history = load_history(session_id)
+            history.append(ChatMessage(role="user", content=question))
+            history.append(ChatMessage(role="assistant", content=reply))
+            save_history(session_id, history)
+            yield {"type": "token", "delta": reply}
+            yield {"type": "done", "answer": reply, "history": history}
+            return
+
+    history = load_history(session_id)
+    rewritten, results = _retrieve(question, history, kb_id)
+    pipeline_desc = ("hybrid+rerank" if RAG_CONFIG.get("enable_rerank") else "hybrid") \
+        if RAG_CONFIG.get("enable_hybrid_search") else "vector"
+
+    if _should_fallback(results):
+        sources = []
+        yield {"type": "sources", "sources": sources}
+        answer = FALLBACK_ANSWER
+        for ch in answer:
+            yield {"type": "token", "delta": ch}
+    else:
+        sources = _build_sources(results)
+        yield {"type": "sources", "sources": sources}
+        prompt = _build_rag_messages(history, results, question)
+        chain = prompt | llm
+        parts = []
+        try:
+            for chunk in chain.stream({"question": question}):
+                delta = chunk.content or ""
+                if delta:
+                    parts.append(delta)
+                    yield {"type": "token", "delta": delta}
+            answer = "".join(parts)
+        except Exception as e:
+            logger.error("流式大模型调用失败: %s", e)
+            answer = "抱歉，当前服务有点忙，请稍后再试~"
+            yield {"type": "token", "delta": answer}
+
+    history.append(ChatMessage(role="user", content=question))
+    history.append(ChatMessage(role="assistant", content=answer))
+    save_history(session_id, history)
+    log_qa(session_id, question, rewritten, sources, answer,
+           (time.time() - start_time) * 1000, kb_id, pipeline_desc)
+    yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in history]}

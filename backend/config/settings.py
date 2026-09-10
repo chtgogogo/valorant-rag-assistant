@@ -1,4 +1,5 @@
 import os
+import yaml
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -9,6 +10,18 @@ DATA_DIR = BACKEND_DIR / "data"
 
 # 加载项目根目录下的 .env 文件
 load_dotenv(PROJECT_ROOT / ".env")
+
+# ------------------------------------------------------
+# 0. 领域皮肤配置（企业化改造关键）
+#    换领域 = 复制 domain_profiles/valorant.yaml 改内容，
+#    再设环境变量 APP_DOMAIN=新领域名，代码零修改
+# ------------------------------------------------------
+DOMAIN = os.getenv("APP_DOMAIN", "valorant")
+_PROFILE_PATH = Path(__file__).resolve().parent / "domain_profiles" / f"{DOMAIN}.yaml"
+if not _PROFILE_PATH.exists():
+    raise ValueError(f"❌ 领域皮肤配置不存在: {_PROFILE_PATH}，请在 config/domain_profiles/ 下创建")
+with open(_PROFILE_PATH, "r", encoding="utf-8") as _f:
+    DOMAIN_PROFILE = yaml.safe_load(_f)
 
 # ------------------------------------------------------
 # 1. 大模型配置（从 .env 读取密钥，绝不硬编码）
@@ -55,29 +68,46 @@ CHAT_CONFIG = {
 }
 
 # ------------------------------------------------------
-# 5.1 RAG 检索配置
+# 5.1 RAG 检索配置（v3.0：查询改写 + 混合检索 + 重排序）
+#     开关均可用环境变量覆盖，方便答辩演示时对比效果
 # ------------------------------------------------------
 RAG_CONFIG = {
-    "top_k": 5,
-    "score_threshold": 0.35,
+    "top_k": 5,                      # 最终喂给大模型的资料条数
+    "score_threshold": 0.35,         # 旧兜底阈值（纯向量模式用）
     "chunk_size": 500,
     "chunk_overlap": 50,
-    "enable_source_score": True
+    "enable_source_score": True,
+    # ---- 新增：三级检索管线开关 ----
+    "enable_query_rewrite": os.getenv("RAG_QUERY_REWRITE", "1") == "1",   # 多轮指代消解
+    "enable_hybrid_search": os.getenv("RAG_HYBRID", "1") == "1",          # BM25+向量混合
+    "enable_rerank": os.getenv("RAG_RERANK", "1") == "1",                 # 重排序精排
+    "recall_k": int(os.getenv("RAG_RECALL_K", "10")),                     # 每路召回条数
+    "rerank_candidates": int(os.getenv("RAG_RERANK_CANDIDATES", "10")),   # 进重排的候选数
+    "rerank_score_threshold": 0.60,  # 重排sigmoid分低于此值→视为没检索到，走兜底
+                                     # 实测：无关问题≈0.50(logit≈0)，相关问题≈0.67+，取gap中间
+    "rerank_model": os.getenv("RERANK_MODEL", "bge-reranker-base"),
 }
 
-SENSITIVE_WORDS = ["操你妈", "傻逼", "妈的", "废物", "脑残"]
-FALLBACK_ANSWER = "抱歉，我在无畏契约的知识库里没有找到足够相关的资料。你可以换个问法，或到“知识库管理”页上传更多攻略文档。"
-REFUSE_ANSWER = "我只解答无畏契约的游戏问题哦，其他问题我暂时不会~"
+# ------------------------------------------------------
+# 5.2 认证配置（企业化预留：默认关闭，开了才校验）
+# ------------------------------------------------------
+AUTH_ENABLED = os.getenv("AUTH_ENABLED", "0") == "1"
+API_KEYS = [k.strip() for k in os.getenv("API_KEYS", "").split(",") if k.strip()]
 
-SYSTEM_PROMPT = """你是顶级的无畏契约（VALORANT）战术大师，性格沉稳冷静。
-回答必须严格基于下面提供的【参考资料】，严禁编造任何技能伤害数值、地图点位或枪械数据。
-如果参考资料里没有，直接说"资料没提到"，并可以建议用户补充知识库。
-回答格式要求：
-1. 使用 Markdown 格式，重点数据（如伤害数值）用**加粗**。
-2. 结构清晰，善用换行、列表和小标题。
-3. 语气像高玩给新手指导，专业且友好。
-4. 涉及“去哪学”时，优先推荐官方资料，再提社区教程。
-"""
+# ------------------------------------------------------
+# 5.3 领域专属话术（全部来自领域皮肤配置，代码里不再写死）
+# ------------------------------------------------------
+APP_NAME = DOMAIN_PROFILE.get("app_name", "RAG 智能助手")
+DEFAULT_KB_ID = DOMAIN_PROFILE.get("default_kb_id", "default")
+CUSTOM_RULES = DOMAIN_PROFILE.get("custom_rules", {})
+FALLBACK_ANSWER = DOMAIN_PROFILE["fallback_answer"]
+REFUSE_ANSWER = DOMAIN_PROFILE["refuse_answer"]
+QUERY_REWRITE_PROMPT = DOMAIN_PROFILE.get("query_rewrite_prompt", "")
+
+SYSTEM_PROMPT = DOMAIN_PROFILE["system_prompt"]
+
+# 敏感词表（通用安全层，与领域无关；企业部署时可按需扩充）
+SENSITIVE_WORDS = ["操你妈", "傻逼", "妈的", "废物", "脑残"]
 
 # ------------------------------------------------------
 # 6. 服务配置
