@@ -184,10 +184,10 @@
  </template>
 
 <script setup>
-import { ref, nextTick, onMounted } from 'vue'
+import { ref, reactive, nextTick, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Marked } from 'marked'
-import { sendMessage, clearHistory, rollbackHistory, testChat } from '../api.js'
+import { sendMessage, sendMessageStream, clearHistory, rollbackHistory, testChat } from '../api.js'
 
 const emit = defineEmits(['manage'])
 
@@ -337,38 +337,71 @@ async function handleSend() {
   loading.value = true
   scrollToBottom()
 
+  // v3.0：优先走流式接口，答案逐字渲染；流式不可用时降级为普通请求
   try {
-    const res = await sendMessage(sessionId, question)
-    const data = res.data
+    const placeholder = reactive({
+      id: ++msgCounter,
+      role: 'assistant',
+      content: '',
+      html: '',
+      sources: [],
+      time: getTime(),
+    })
+    let started = false // 收到首个token后才把占位消息上屏，避免空泡闪烁
 
-    if (data.code === 200) {
+    const { answer } = await sendMessageStream(sessionId, question, 'valorant', {
+      onSources: (sources) => { placeholder.sources = sources || [] },
+      onToken: (delta) => {
+        if (!started) {
+          messages.value.push(placeholder)
+          started = true
+        }
+        placeholder.content += delta
+        placeholder.html = renderMarkdown(placeholder.content)
+        scrollToBottom()
+      },
+    })
+    // 兜底：全程没收到任何token（如直接done），也要保证答案上屏
+    if (!started) {
+      placeholder.content = answer
+      placeholder.html = renderMarkdown(answer)
+      messages.value.push(placeholder)
+    }
+  } catch (streamErr) {
+    // 流式失败（后端未升级/网络断开）→ 降级走原来的普通接口
+    try {
+      const res = await sendMessage(sessionId, question)
+      const data = res.data
+
+      if (data.code === 200) {
+        messages.value.push({
+          id: ++msgCounter,
+          role: 'assistant',
+          content: data.data.answer,
+          html: renderMarkdown(data.data.answer),
+          sources: data.data.sources || [],
+          time: getTime(),
+        })
+      } else {
+        messages.value.push({
+          id: ++msgCounter,
+          role: 'assistant',
+          content: data.msg || '请求失败',
+          html: renderMarkdown(data.msg || '请求失败'),
+          sources: [],
+          time: getTime(),
+        })
+      }
+    } catch {
       messages.value.push({
         id: ++msgCounter,
         role: 'assistant',
-        content: data.data.answer,
-        html: renderMarkdown(data.data.answer),
-        sources: data.data.sources || [],
-        time: getTime(),
-      })
-    } else {
-      messages.value.push({
-        id: ++msgCounter,
-        role: 'assistant',
-        content: data.msg || '请求失败',
-        html: renderMarkdown(data.msg || '请求失败'),
+        content: '网络错误，请检查后端服务是否启动',
+        html: '<p>网络错误，请检查后端服务是否启动</p>',
         sources: [],
         time: getTime(),
       })
     }
-  } catch {
-    messages.value.push({
-      id: ++msgCounter,
-      role: 'assistant',
-      content: '网络错误，请检查后端服务是否启动',
-      html: '<p>网络错误，请检查后端服务是否启动</p>',
-      sources: [],
-      time: getTime(),
-    })
   } finally {
     loading.value = false
     scrollToBottom()

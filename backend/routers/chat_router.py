@@ -1,4 +1,6 @@
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
+import json
 from schemas.models import ApiResponse, ChatRequest, ChatResponse, ChatMessage
 chat_router = APIRouter()
 # 测试接口保留
@@ -17,6 +19,23 @@ async def send_message(req: ChatRequest):
     answer, sources, history = chat_single_turn(req.session_id, req.question, req.kb_id)
     resp = ChatResponse(answer=answer, sources=sources, history=history)
     return ApiResponse(data=resp.model_dump())
+
+# 流式发送接口（v3.0 新增）：SSE 协议，答案逐字推送，前端边收边渲染
+@chat_router.post("/stream", summary="流式发送消息（SSE）")
+async def stream_message(req: ChatRequest):
+    from services.chat_service import chat_single_turn_stream
+
+    def event_stream():
+        for event in chat_single_turn_stream(req.session_id, req.question, req.kb_id):
+            event_type = event.pop("type")
+            yield f"event: {event_type}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
 # 清空对话接口
 @chat_router.post("/clear", response_model=ApiResponse, summary="清空指定会话历史")
 async def clear_chat(session_id: str):
