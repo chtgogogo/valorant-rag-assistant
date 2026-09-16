@@ -164,6 +164,10 @@ RAG_RERANK=1            # 管线开关均可独立控制（RAG_HYBRID / RAG_QUER
 
 改了 `knowledge_base/` 下的 md 之后需要重建索引，运行 `重新索引.bat`，或者在 `backend` 目录执行 `python scripts/init_knowledge_base.py`。这个脚本会清空旧向量库、同步源文档、重新向量化。
 
+## 开发说明
+
+本项目由作者独立完成，涵盖：检索管线（查询改写 / 混合检索 / CrossEncoder 重排序）、评测体系（20 题评测集 + 双模式对比脚本）、领域配置化改造、前后端实现与部署脚本。
+
 ## 项目结构
 
 ```
