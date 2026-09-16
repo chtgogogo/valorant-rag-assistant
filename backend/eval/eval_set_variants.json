@@ -1,0 +1,13 @@
+{
+  "description": "RAG 变体鲁棒性测试集（曹灏天设计）：错别字/拼音/俗称/港台译名变体，测混合检索的容错边界。预期部分用例失败——失败即发现（译名覆盖缺口或需要查询纠错）。",
+  "cases": [
+    {"id": "V01", "type": "错别字", "question": "爆徒的伤害是多少？", "expected_docs": ["无畏契约武器图鉴.md"], "expected_keywords": ["狂徒"], "note": "爆徒≈狂徒(Vandal)错别字，测BM25+向量能否纠正"},
+    {"id": "V02", "type": "错别字", "question": "包徒多少钱？", "expected_docs": ["无畏契约武器图鉴.md"], "expected_keywords": ["狂徒"], "note": "更离谱的错别字，预期可能失败——失败即发现检索容错边界"},
+    {"id": "V03", "type": "拼音", "question": "baotu的伤害是多少？", "expected_docs": ["无畏契约武器图鉴.md"], "expected_keywords": ["狂徒"], "note": "拼音输入，预期大概率失败——BM25对拼音无能为力，向量看语义映射"},
+    {"id": "V04", "type": "俗称", "question": "加特林的伤害是多少？", "expected_docs": ["无畏契约武器图鉴.md"], "expected_keywords": ["奥丁"], "note": "加特林=俗称的奥丁(Odin机枪)，测俗称映射"},
+    {"id": "V05", "type": "港台译名", "question": "瑟符的技能是什么？", "expected_docs": ["无畏契约英雄介绍.md"], "expected_keywords": ["零"], "note": "瑟符=Cypher台服名，知识库只有'零'——预期暴露译名覆盖缺口，结果可作为补知识库的证据"},
+    {"id": "V06", "type": "英文ID", "question": "Jett的技能怎么用？", "expected_docs": ["无畏契约英雄介绍.md"], "expected_keywords": ["捷风"], "note": "英文ID命中中文条目，混合检索应能处理"},
+    {"id": "V07", "type": "英文ID", "question": "Vandal和Phantom有什么区别？", "expected_docs": ["无畏契约武器图鉴.md"], "expected_keywords": ["狂徒", "幻影"], "note": "双英文武器名，测多实体检索"},
+    {"id": "V08", "type": "常识边界", "question": "韩国人角色有哪些？", "expected_docs": ["无畏契约英雄介绍.md"], "expected_keywords": ["韩国"], "note": "按国籍聚合查询，测知识库跨条目回答能力"}
+  ]
+}
