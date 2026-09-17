@@ -7,11 +7,13 @@
 # ------------------------------------------------------------
 import math
 import os
+from typing import TYPE_CHECKING
 
 # HuggingFace 镜像与缓存位置（必须在 import sentence_transformers 之前设置）
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
-from sentence_transformers import CrossEncoder
+if TYPE_CHECKING:  # 只给类型检查器看；运行时不导入，避免启动就吃 1.5GB
+    from sentence_transformers import CrossEncoder
 
 from config.settings import RAG_CONFIG, EMBEDDING_CONFIG
 from schemas.models import SearchResult
@@ -22,10 +24,12 @@ logger = logging.getLogger(__name__)
 _cross_encoder = None
 
 
-def _get_cross_encoder() -> CrossEncoder:
+def _get_cross_encoder() -> "CrossEncoder":
     """懒加载 bge-reranker 模型（首次调用时从 hf-mirror 下载到 HF_HOME 缓存）"""
     global _cross_encoder
     if _cross_encoder is None:
+        # 延迟导入：同样是避免启动时把 torch 拖进来
+        from sentence_transformers import CrossEncoder
         model_name = RAG_CONFIG["rerank_model"]
         if "/" not in model_name:
             model_name = f"BAAI/{model_name}"

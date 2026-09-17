@@ -40,4 +40,9 @@ def recent_audit(days: int = 7):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host=SERVER_HOST, port=SERVER_PORT, reload=True)
+    # 默认关闭热重载：reload=True 时 uvicorn 会额外起一个"监视文件"的父进程，
+    # 而 main.py 顶层 import 会把 torch/sentence_transformers 一起带进来，
+    # 等于白白多占约 1.6GB 内存，而且一改文件就把子进程连同模型重载一遍。
+    # 需要改代码即时生效时：先设环境变量 DEV_RELOAD=1 再启动。
+    DEV_RELOAD = os.getenv("DEV_RELOAD", "0") == "1"
+    uvicorn.run("main:app", host=SERVER_HOST, port=SERVER_PORT, reload=DEV_RELOAD)

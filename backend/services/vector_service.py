@@ -8,7 +8,6 @@ os.environ.setdefault("CURL_CA_BUNDLE", "")
 logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.CRITICAL)
 logging.getLogger("chromadb.telemetry.segment").setLevel(logging.CRITICAL)
 import chromadb
-from sentence_transformers import SentenceTransformer
 from config.settings import VECTOR_DB_PATH, EMBEDDING_CONFIG
 from schemas.models import DocumentChunk, SearchResult
 
@@ -21,6 +20,9 @@ def _get_embedding_model():
     """懒加载 bge-small-zh-v1.5 embedding 模型"""
     global _embedding_model
     if _embedding_model is None:
+        # 延迟导入：sentence_transformers 会把 torch 一起拉进来（约 1.5GB），
+        # 挪到真正要用模型的时候才 import，进程启动就轻得多
+        from sentence_transformers import SentenceTransformer
         model_name = EMBEDDING_CONFIG["model_name"]
         # bge 系列模型在 HuggingFace 上的完整路径是 BAAI/xxx，配置里写的是简写
         if "/" not in model_name:

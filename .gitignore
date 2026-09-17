@@ -27,3 +27,7 @@ frontend/dist/
 # OS junk
 Thumbs.db
 .DS_Store
+
+# 测试日志与系统保留名残留
+start_test.log
+NUL
