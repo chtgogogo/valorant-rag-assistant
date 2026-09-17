@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>无畏契约 RAG 助手 · 三级检索管线架构</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#f5f5f5; --ink:#2d3142; --muted:#4f5d75; --soft:#7a8399;
+    --accent:#eb6c36; --link:#2e5aa8; --rule:rgba(45,49,66,0.10);
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--paper);font-family:'Geist','Noto Sans SC','Microsoft YaHei',sans-serif;
+       color:var(--ink);display:flex;flex-direction:column;align-items:center;padding:2rem 1rem;}
+  .wrap{max-width:1320px;width:100%;}
+  .eyebrow{font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:0.18em;
+           text-transform:uppercase;color:var(--soft);margin-bottom:8px;}
+  h1{font-family:'Instrument Serif','Noto Sans SC',serif;font-weight:400;font-size:1.9rem;margin-bottom:6px;}
+  .sub{color:var(--muted);font-size:0.95rem;margin-bottom:20px;}
+  .diagram{width:100%;overflow-x:auto;}
+  svg{display:block;width:100%;height:auto;}
+  .colophon{font-family:'Geist Mono',monospace;font-size:10px;color:var(--soft);
+            border-top:1px solid var(--rule);padding-top:10px;margin-top:16px;letter-spacing:0.08em;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">VALORANT RAG ASSISTANT · v3.0</p>
+  <h1>三级检索管线架构</h1>
+  <p class="sub">提问先经过「查询改写 → 混合检索 → 重排序」三级管线，答案永远带出处；重排分数低于阈值即拒答兜底，杜绝瞎编。</p>
+
+  <div class="diagram">
+  <svg viewBox="0 0 1280 660" role="img" aria-labelledby="rag-pipeline-title rag-pipeline-desc" xmlns="http://www.w3.org/2000/svg">
+    <title id="rag-pipeline-title">无畏契约 RAG 助手三级检索管线架构图</title>
+    <desc id="rag-pipeline-desc">架构图：用户提问经 Vue3 前端进入 FastAPI 后端，依次通过查询改写、BM25 与向量并行混合检索加 RRF 融合、CrossEncoder 重排序三级管线，重排分数达标的前 5 条资料交给 GLM 生成带来源的回答，未达标则拒答兜底；ChromaDB 存储文档向量。</desc>
+
+    <defs>
+      <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+        <polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/>
+      </marker>
+      <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+        <polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/>
+      </marker>
+      <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+        <polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/>
+      </marker>
+    </defs>
+
+    <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+    <!-- ===== zones（先画） ===== -->
+    <rect x="432" y="56" width="648" height="380" rx="8"
+          fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+    <rect x="448" y="60" width="220" height="12" rx="2" fill="#f5f5f5"/>
+    <text x="558" y="69" fill="rgba(45,49,66,0.40)" font-size="7"
+          font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.14em">RAG RETRIEVAL PIPELINE · v3.0</text>
+
+    <!-- ===== arrows（节点前画） ===== -->
+    <!-- 提问：前端 → FastAPI -->
+    <line x1="176" y1="236" x2="240" y2="236" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+    <rect x="188" y="214" width="44" height="12" rx="2" fill="#f5f5f5"/>
+    <text x="210" y="223" fill="#7a8399" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">HTTP</text>
+
+    <!-- FastAPI → 查询改写 -->
+    <line x1="384" y1="236" x2="456" y2="236" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+    <!-- 改写 → BM25（右上弯） -->
+    <path d="M 600,224 H 624 Q 632,224 632,216 V 136 Q 632,128 640,128 H 656"
+          fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+    <!-- 改写 → 向量检索（右下弯） -->
+    <path d="M 600,248 H 624 Q 632,248 632,256 V 320 Q 632,328 640,328 H 656"
+          fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+    <!-- BM25 → RRF 顶部入口 -->
+    <path d="M 784,128 H 836 Q 844,128 844,136 V 192 Q 844,200 852,200"
+          fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+    <!-- 向量 → RRF 底部入口 -->
+    <path d="M 784,328 H 836 Q 844,328 844,320 V 280 Q 844,272 852,272"
+          fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+    <!-- RRF → 重排（accent，v3.0 关键链路） -->
+    <line x1="896" y1="236" x2="920" y2="236" stroke="#eb6c36" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+    <!-- 重排 → 生成（accent） -->
+    <line x1="1072" y1="236" x2="1104" y2="236" stroke="#eb6c36" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+
+    <!-- 生成 → 前端（顶部回程，SSE 流式） -->
+    <path d="M 1176,200 V 48 Q 1176,40 1168,40 H 112 Q 104,40 104,48 V 200"
+          fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+    <rect x="536" y="22" width="96" height="12" rx="2" fill="#f5f5f5"/>
+    <text x="584" y="31" fill="#2e5aa8" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">SSE 流式回答 · 附来源</text>
+
+    <!-- 向量检索 ⇢ ChromaDB（dashed 存取） -->
+    <line x1="720" y1="360" x2="720" y2="472" stroke="#4f5d75" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+    <rect x="730" y="404" width="64" height="14" rx="2" fill="#f5f5f5"/>
+    <text x="762" y="414" fill="#7a8399" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.06em">向量查询</text>
+
+    <!-- ===== nodes ===== -->
+    <!-- Vue3 前端（Input） -->
+    <rect x="32" y="200" width="144" height="72" rx="6" fill="rgba(122,131,153,0.10)" stroke="#7a8399" stroke-width="1"/>
+    <rect x="40" y="206" width="40" height="12" rx="2" fill="transparent" stroke="rgba(122,131,153,0.5)" stroke-width="0.8"/>
+    <text x="60" y="215" fill="rgba(74,83,101,0.9)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">FRONTEND</text>
+    <text x="104" y="240" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC',sans-serif" text-anchor="middle">Vue3 前端</text>
+    <text x="104" y="257" fill="#4f5d75" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">对话页 · 知识库管理 :5174</text>
+
+    <!-- FastAPI（API） -->
+    <rect x="240" y="200" width="144" height="72" rx="6" fill="#f5f5f5"/>
+    <rect x="240" y="200" width="144" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+    <rect x="248" y="206" width="28" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.4)" stroke-width="0.8"/>
+    <text x="262" y="215" fill="rgba(45,49,66,0.8)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">API</text>
+    <text x="312" y="240" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC',sans-serif" text-anchor="middle">FastAPI 后端</text>
+    <text x="312" y="257" fill="#4f5d75" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">/api/chat :8001</text>
+
+    <!-- 查询改写（Step） -->
+    <rect x="456" y="200" width="144" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+    <rect x="464" y="206" width="36" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.4)" stroke-width="0.8"/>
+    <text x="482" y="215" fill="rgba(45,49,66,0.8)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">STEP 1</text>
+    <text x="528" y="240" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC',sans-serif" text-anchor="middle">查询改写</text>
+    <text x="528" y="257" fill="#4f5d75" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">GLM 指代消解 · 多轮</text>
+
+    <!-- BM25（Step） -->
+    <rect x="656" y="96" width="128" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+    <text x="720" y="124" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC',sans-serif" text-anchor="middle">BM25 关键词检索</text>
+    <text x="720" y="141" fill="#4f5d75" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">jieba 分词</text>
+
+    <!-- 向量检索（Step） -->
+    <rect x="656" y="296" width="128" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+    <text x="720" y="324" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC',sans-serif" text-anchor="middle">向量语义检索</text>
+    <text x="720" y="341" fill="#4f5d75" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">bge-small-zh-v1.5</text>
+
+    <!-- RRF（Step 2） -->
+    <rect x="808" y="200" width="88" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+    <rect x="816" y="206" width="36" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.4)" stroke-width="0.8"/>
+    <text x="834" y="215" fill="rgba(45,49,66,0.8)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">STEP 2</text>
+    <text x="852" y="244" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC',sans-serif" text-anchor="middle">RRF 融合</text>
+    <text x="852" y="261" fill="#4f5d75" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">K=60</text>
+
+    <!-- 重排序（Focal · coral） -->
+    <rect x="920" y="188" width="152" height="96" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1.2"/>
+    <text x="996" y="218" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC',sans-serif" text-anchor="middle">重排序</text>
+    <text x="996" y="237" fill="#4f5d75" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">CrossEncoder</text>
+    <text x="996" y="255" fill="#4f5d75" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">bge-reranker-base</text>
+    <text x="996" y="271" fill="#4f5d75" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">阈值 0.60 · 兜底拒答</text>
+
+    <!-- 答案生成（Step） -->
+    <rect x="1104" y="200" width="144" height="72" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+    <rect x="1112" y="206" width="36" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.4)" stroke-width="0.8"/>
+    <text x="1130" y="215" fill="rgba(45,49,66,0.8)" font-size="7" font-family="'Geist Mono',monospace" text-anchor="middle" letter-spacing="0.08em">STEP 3</text>
+    <text x="1176" y="240" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC',sans-serif" text-anchor="middle">答案生成</text>
+    <text x="1176" y="257" fill="#4f5d75" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">GLM-4-Flash · 附来源</text>
+
+    <!-- ChromaDB（Store） -->
+    <rect x="640" y="472" width="160" height="64" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+    <text x="720" y="500" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC',sans-serif" text-anchor="middle">ChromaDB 向量库</text>
+    <text x="720" y="517" fill="#4f5d75" font-size="9" font-family="'Geist Mono',monospace" text-anchor="middle">chunk 500 / overlap 50</text>
+
+    <!-- ===== legend ===== -->
+    <line x1="30" y1="592" x2="1250" y2="592" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+    <text x="30" y="612" fill="#4f5d75" font-size="8" font-family="'Geist Mono',monospace" letter-spacing="0.14em">LEGEND</text>
+    <line x1="110" y1="609" x2="150" y2="609" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+    <text x="160" y="612" fill="#4f5d75" font-size="9" font-family="'Geist','Noto Sans SC',sans-serif">请求 / 数据流</text>
+    <line x1="270" y1="609" x2="310" y2="609" stroke="#4f5d75" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+    <text x="320" y="612" fill="#4f5d75" font-size="9" font-family="'Geist','Noto Sans SC',sans-serif">向量存取</text>
+    <rect x="410" y="603" width="12" height="12" rx="2" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+    <text x="430" y="612" fill="#4f5d75" font-size="9" font-family="'Geist','Noto Sans SC',sans-serif">v3.0 关键升级：重排序 + 拒答兜底（低于阈值 0.60 不强行回答）</text>
+  </svg>
+  </div>
+
+  <p class="colophon">VALORANT RAG ASSISTANT · FastAPI + LangChain + ChromaDB + Vue3 · 独立开发</p>
+</div>
+</body>
+</html>
