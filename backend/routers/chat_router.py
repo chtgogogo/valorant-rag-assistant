@@ -51,3 +51,10 @@ async def rollback_chat(session_id: str, turn_index: int):
         raise HTTPException(status_code=400, detail="回滚失败，轮次索引不合法")
     new_history = load_history(session_id)
     return ApiResponse(msg="回滚成功", data={"history": [h.model_dump() for h in new_history]})
+
+@chat_router.get("/warmup", response_model=ApiResponse, summary="预热检索模型")
+async def warmup_retrieval_api(kb_id: str = None):
+    """预热 embedding、BM25、重排模型，避免第一次问答过慢。"""
+    from services.chat_service import warmup_retrieval
+    data = warmup_retrieval(kb_id)
+    return ApiResponse(msg="检索模型预热完成", data=data)

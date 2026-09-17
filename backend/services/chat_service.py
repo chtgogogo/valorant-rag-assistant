@@ -10,6 +10,7 @@ from config.settings import (
 from schemas.models import ChatMessage, SearchResult
 from utils.sensitive import filter_sensitive
 from utils.audit import log_qa
+from services.official_data_service import answer_official_data_query, expand_query_aliases, replace_aliases_with_official
 
 import logging
 logging.basicConfig(
@@ -34,7 +35,7 @@ def test_llm_call(question: str) -> str:
         ("system", "你是无畏契约游戏助手，简短回答即可。"),
         ("human", "{question}")
     ])
-    return _call_llm_with_retry(prompt, {"question": question})
+    return _call_llm_with_retry(prompt, {"question": question_for_prompt})
 
 # -------------------------- 记忆相关工具函数 --------------------------
 def _get_history_path(session_id: str) -> str:
@@ -81,6 +82,7 @@ def _retrieve(question: str, history: list[ChatMessage], kb_id: str) -> tuple[st
     from services.hybrid_retriever import hybrid_search
     from services.reranker import rerank
 
+    question = expand_query_aliases(question)
     rewritten = rewrite_query(question, history)
     candidates = hybrid_search(rewritten, kb_id)
     results = rerank(rewritten, candidates)
@@ -98,7 +100,20 @@ def _should_fallback(results: list[SearchResult]) -> bool:
     return best < RAG_CONFIG["score_threshold"]
 
 
+def _dedupe_results(results: list[SearchResult]) -> list[SearchResult]:
+    seen = set()
+    out = []
+    for r in results:
+        key = (r.doc_id, (r.content or '')[:80])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
+    return out
+
+
 def _build_sources(results: list[SearchResult]) -> list[dict]:
+    results = _dedupe_results(results)
     return [
         {"name": r.source, "id": r.doc_id, "score": r.score}
         for r in results
@@ -110,6 +125,7 @@ def _build_sources(results: list[SearchResult]) -> list[dict]:
 
 def _build_rag_messages(history: list[ChatMessage], results: list[SearchResult], question: str) -> ChatPromptTemplate:
     """拼 RAG 提示词：系统提示 + 参考资料 + 历史 + 最新问题"""
+    results = _dedupe_results(results)
     context = "\n".join(
         [f"参考资料{i+1}（来源：{r.source}）：{r.content}" for i, r in enumerate(results)]
     )
@@ -119,6 +135,7 @@ def _build_rag_messages(history: list[ChatMessage], results: list[SearchResult],
 1. 参考资料：{context}
 2. 如果问题与无畏契约游戏完全无关（如写代码、做菜、天气、闲聊等日常请求），即使参考资料里出现了相关字样，也必须直接返回：{REFUSE_ANSWER}
 3. 参考资料里没有的内容不要编造，直接返回兜底话术
+4. 不要重复介绍同一技能或同一段内容；如果答案已经说清楚，直接结束。
 """),
     ]
     for msg in history:
@@ -162,11 +179,22 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple
             save_history(session_id, history)
             return reply, [], history
 
+    # 官方结构化数据优先：列表/定位/价格类问题走确定性回答，避免 LLM 胡编
+    official_answer = answer_official_data_query(question)
+    if official_answer:
+        history = load_history(session_id)
+        history.append(ChatMessage(role="user", content=question))
+        history.append(ChatMessage(role="assistant", content=official_answer))
+        save_history(session_id, history)
+        return official_answer, [], history
+
+    question_for_prompt = replace_aliases_with_official(question)
+
     # 3. 加载历史
     history = load_history(session_id)
 
     # 4~6. 三级检索管线：改写 → 混合召回 → 重排
-    rewritten, results = _retrieve(question, history, kb_id)
+    rewritten, results = _retrieve(question_for_prompt, history, kb_id)
     pipeline_desc = ("hybrid+rerank" if RAG_CONFIG.get("enable_rerank") else "hybrid") \
         if RAG_CONFIG.get("enable_hybrid_search") else "vector"
 
@@ -176,8 +204,8 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple
         sources = []
     else:
         # 8. 拼提示词（加拒答规则），带重试调用大模型
-        prompt = _build_rag_messages(history, results, question)
-        answer = _call_llm_with_retry(prompt, {"question": question})
+        prompt = _build_rag_messages(history, results, question_for_prompt)
+        answer = _call_llm_with_retry(prompt, {"question": question_for_prompt})
         sources = _build_sources(results)
 
     # 9. 更新历史 + 审计留痕
@@ -205,7 +233,7 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
     if is_sensitive:
         answer = "你的问题包含敏感词，请重新提问~"
         yield {"type": "token", "delta": answer}
-        yield {"type": "done", "answer": answer, "history": load_history(session_id)}
+        yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in load_history(session_id)]}
         return
 
     for keyword, reply in CUSTOM_RULES.items():
@@ -215,11 +243,22 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
             history.append(ChatMessage(role="assistant", content=reply))
             save_history(session_id, history)
             yield {"type": "token", "delta": reply}
-            yield {"type": "done", "answer": reply, "history": history}
+            yield {"type": "done", "answer": reply, "history": [m.model_dump() for m in history]}
             return
 
+    official_answer = answer_official_data_query(question)
+    if official_answer:
+        history = load_history(session_id)
+        history.append(ChatMessage(role="user", content=question))
+        history.append(ChatMessage(role="assistant", content=official_answer))
+        save_history(session_id, history)
+        yield {"type": "token", "delta": official_answer}
+        yield {"type": "done", "answer": official_answer, "history": [m.model_dump() for m in history]}
+        return
+
+    question_for_prompt = replace_aliases_with_official(question)
     history = load_history(session_id)
-    rewritten, results = _retrieve(question, history, kb_id)
+    rewritten, results = _retrieve(question_for_prompt, history, kb_id)
     pipeline_desc = ("hybrid+rerank" if RAG_CONFIG.get("enable_rerank") else "hybrid") \
         if RAG_CONFIG.get("enable_hybrid_search") else "vector"
 
@@ -232,11 +271,11 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
     else:
         sources = _build_sources(results)
         yield {"type": "sources", "sources": sources}
-        prompt = _build_rag_messages(history, results, question)
+        prompt = _build_rag_messages(history, results, question_for_prompt)
         chain = prompt | llm
         parts = []
         try:
-            for chunk in chain.stream({"question": question}):
+            for chunk in chain.stream({"question": question_for_prompt}):
                 delta = chunk.content or ""
                 if delta:
                     parts.append(delta)
@@ -253,3 +292,16 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
     log_qa(session_id, question, rewritten, sources, answer,
            (time.time() - start_time) * 1000, kb_id, pipeline_desc)
     yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in history]}
+
+
+def warmup_retrieval(kb_id: str = None) -> dict:
+    """预热检索链路：加载 embedding、BM25 索引、CrossEncoder 重排模型。
+    不调用大模型生成，适合面试演示前先请求一次。"""
+    kb_id = kb_id or DEFAULT_KB_ID
+    start = time.time()
+    _rewritten, results = _retrieve("无畏契约英雄和武器介绍", [], kb_id)
+    return {
+        "kb_id": kb_id,
+        "candidates": len(results),
+        "latency_ms": round((time.time() - start) * 1000, 1),
+    }

@@ -33,3 +33,11 @@
    python scripts/init_knowledge_base.py
    ```
 3. 脚本会清空旧向量库、把本目录文档同步到 `backend/data/uploads/` 并重新向量化。
+
+## 官方结构化数据
+
+- `heroes.json`：29 位英雄的官方 zh-CN 名称、定位、技能键位
+- `weapons.json`：20 把武器的价格与伤害分段
+- `maps.json`：官方 zh-CN / en-US 地图名
+
+> 由 `backend/scripts/sync_official_data.py` 生成，问答中用于列表/价格类确定性回答。

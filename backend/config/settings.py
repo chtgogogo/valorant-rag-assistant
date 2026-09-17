@@ -30,8 +30,8 @@ LLM_CONFIG = {
     "api_key": os.getenv("ZHIPU_API_KEY"),
     "base_url": os.getenv("ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4"),
     "model_name": os.getenv("ZHIPU_MODEL", "glm-4-flash"),
-    "temperature": float(os.getenv("LLM_TEMPERATURE", "0.3")),
-    "max_tokens": int(os.getenv("LLM_MAX_TOKENS", "2048")),
+    "temperature": float(os.getenv("LLM_TEMPERATURE", "0.2")),
+    "max_tokens": int(os.getenv("LLM_MAX_TOKENS", "1024")),
 }
 
 # 检查一下有没有读到密钥（如果没读到，程序直接报错提醒你）
@@ -82,7 +82,7 @@ RAG_CONFIG = {
     "enable_hybrid_search": os.getenv("RAG_HYBRID", "1") == "1",          # BM25+向量混合
     "enable_rerank": os.getenv("RAG_RERANK", "1") == "1",                 # 重排序精排
     "recall_k": int(os.getenv("RAG_RECALL_K", "10")),                     # 每路召回条数
-    "rerank_candidates": int(os.getenv("RAG_RERANK_CANDIDATES", "10")),   # 进重排的候选数
+    "rerank_candidates": int(os.getenv("RAG_RERANK_CANDIDATES", "6")),   # 进重排的候选数
     "rerank_score_threshold": 0.60,  # 重排sigmoid分低于此值→视为没检索到，走兜底
                                      # 实测：无关问题≈0.50(logit≈0)，相关问题≈0.67+，取gap中间
     "rerank_model": os.getenv("RERANK_MODEL", "bge-reranker-base"),
@@ -113,4 +113,4 @@ SENSITIVE_WORDS = ["操你妈", "傻逼", "妈的", "废物", "脑残"]
 # 6. 服务配置
 # ------------------------------------------------------
 SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
-SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))
+SERVER_PORT = int(os.getenv("SERVER_PORT", "8001"))

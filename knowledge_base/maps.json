@@ -1,0 +1,210 @@
+[
+  {
+    "uuid": "7eaecc1b-4337-bbf6-6ab9-04b8f06b3319",
+    "cn": "亚海悬城",
+    "en": "Ascent",
+    "mapUrl": "/Game/Maps/Ascent/Ascent",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "d960549e-485c-e861-8d71-aa9d1aed12a2",
+    "cn": "霓虹町",
+    "en": "Split",
+    "mapUrl": "/Game/Maps/Bonsai/Bonsai",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "b529448b-4d60-346e-e89e-00a4c527a405",
+    "cn": "裂变峡谷",
+    "en": "Fracture",
+    "mapUrl": "/Game/Maps/Canyon/Canyon",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "2c9d57ec-4431-9c5e-2939-8f9ef6dd5cba",
+    "cn": "源工重镇",
+    "en": "Bind",
+    "mapUrl": "/Game/Maps/Duality/Duality",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "a9009649-421f-d5d5-f80c-0cbe02c125bb",
+    "cn": "斗牛 1",
+    "en": "Skirmish A",
+    "mapUrl": "/Game/Maps/Duel/Duel_1/Skirmish_A",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "a38a3f9a-4042-844c-8970-a3ac2f7ce93d",
+    "cn": "斗牛 2",
+    "en": "Skirmish B",
+    "mapUrl": "/Game/Maps/Duel/Duel_2/Skirmish_B",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "a264de0f-4a04-9c78-c97a-a6b192ce6e86",
+    "cn": "斗牛 3",
+    "en": "Skirmish C",
+    "mapUrl": "/Game/Maps/Duel/Duel_3/Skirmish_C",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "4490f1d6-4818-bf5f-9b3a-9c9a8dbb52ed",
+    "cn": "斗牛 5",
+    "en": "Skirmish E",
+    "mapUrl": "/Game/Maps/Duel/Duel_Heady/Skirmish_E",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "1c7555fc-4bc6-3b98-9674-789d47ef6c50",
+    "cn": "斗牛 4",
+    "en": "Skirmish D",
+    "mapUrl": "/Game/Maps/Duel/Duel_Platform/Skirmish_D",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "2fb9a4fd-47b8-4e7d-a969-74b4046ebd53",
+    "cn": "微风岛屿",
+    "en": "Breeze",
+    "mapUrl": "/Game/Maps/Foxtrot/Foxtrot",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "690b3ed2-4dff-945b-8223-6da834e30d24",
+    "cn": "商街",
+    "en": "District",
+    "mapUrl": "/Game/Maps/HURM/HURM_Alley/HURM_Alley",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "12452a9d-48c3-0b02-e7eb-0381c3520404",
+    "cn": "古城",
+    "en": "Kasbah",
+    "mapUrl": "/Game/Maps/HURM/HURM_Bowl/HURM_Bowl",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "2c09d728-42d5-30d8-43dc-96a05cc7ee9d",
+    "cn": "渔市",
+    "en": "Drift",
+    "mapUrl": "/Game/Maps/HURM/HURM_Helix/HURM_Helix",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "d6336a5a-428f-c591-98db-c8a291159134",
+    "cn": "乱次元",
+    "en": "Glitch",
+    "mapUrl": "/Game/Maps/HURM/HURM_HighTide/HURM_HighTide",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "de28aa9b-4cbe-1003-320e-6cb3ec309557",
+    "cn": "小镇",
+    "en": "Piazza",
+    "mapUrl": "/Game/Maps/HURM/HURM_Yard/HURM_Yard",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "224b0a95-48b9-f703-1bd8-67aca101a61f",
+    "cn": "幽邃地窟",
+    "en": "Abyss",
+    "mapUrl": "/Game/Maps/Infinity/Infinity",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "2fe4ed3a-450a-948b-6d6b-e89a78e680a9",
+    "cn": "莲华古城",
+    "en": "Lotus",
+    "mapUrl": "/Game/Maps/Jam/Jam",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "92584fbe-486a-b1b2-9faa-39b0f486b498",
+    "cn": "日落之城",
+    "en": "Sunset",
+    "mapUrl": "/Game/Maps/Juliett/Juliett",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "1f10dab3-4294-3827-fa35-c2aa00213cf3",
+    "cn": "基础训练",
+    "en": "Basic Training",
+    "mapUrl": "/Game/Maps/NPEV2/NPEV2",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "fd267378-4d1d-484f-ff52-77821ed10dc2",
+    "cn": "深海明珠",
+    "en": "Pearl",
+    "mapUrl": "/Game/Maps/Pitt/Pitt",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "756da597-416b-c0f2-f47b-afbdf28670bc",
+    "cn": "天枢云阙",
+    "en": "Summit",
+    "mapUrl": "/Game/Maps/Plummet/Plummet",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "e2ad5c54-4114-a870-9641-8ea21279579a",
+    "cn": "森寒冬港",
+    "en": "Icebox",
+    "mapUrl": "/Game/Maps/Port/Port",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "ee613ee9-28b7-4beb-9666-08db13bb2244",
+    "cn": "靶场",
+    "en": "The Range",
+    "mapUrl": "/Game/Maps/Poveglia/Range",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "5914d1e0-40c4-cfdd-6b88-eba06347686c",
+    "cn": "靶场",
+    "en": "The Range",
+    "mapUrl": "/Game/Maps/PovegliaV2/RangeV2",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "1c18ab1f-420d-0d8b-71d0-77ad3c439115",
+    "cn": "盐海矿镇",
+    "en": "Corrode",
+    "mapUrl": "/Game/Maps/Rook/Rook",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  },
+  {
+    "uuid": "2bee0dc9-4ffe-519b-1cbd-7fbe763a6047",
+    "cn": "隐世修所",
+    "en": "Haven",
+    "mapUrl": "/Game/Maps/Triad/Triad",
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17"
+  }
+]

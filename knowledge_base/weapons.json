@@ -1,0 +1,570 @@
+[
+  {
+    "cn": "奥丁",
+    "en": "Odin",
+    "category": "EEquippableCategory::Heavy",
+    "cost": 3200,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 30,
+        "headDamage": 95,
+        "bodyDamage": 38,
+        "legDamage": 32.3
+      },
+      {
+        "rangeStartMeters": 30,
+        "rangeEndMeters": 50,
+        "headDamage": 77.5,
+        "bodyDamage": 31,
+        "legDamage": 26.35
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "奥丁",
+      "odin",
+      "大机枪"
+    ]
+  },
+  {
+    "cn": "战神",
+    "en": "Ares",
+    "category": "EEquippableCategory::Heavy",
+    "cost": 1600,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 30,
+        "headDamage": 75,
+        "bodyDamage": 30,
+        "legDamage": 25.5
+      },
+      {
+        "rangeStartMeters": 30,
+        "rangeEndMeters": 50,
+        "headDamage": 70,
+        "bodyDamage": 28,
+        "legDamage": 23.800001
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "战神",
+      "ares",
+      "机枪"
+    ]
+  },
+  {
+    "cn": "狂徒",
+    "en": "Vandal",
+    "category": "EEquippableCategory::Rifle",
+    "cost": 2900,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 50,
+        "headDamage": 160,
+        "bodyDamage": 40,
+        "legDamage": 34
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "狂徒",
+      "vandal",
+      "ak",
+      "ak47",
+      "阿卡"
+    ]
+  },
+  {
+    "cn": "獠犬",
+    "en": "Bulldog",
+    "category": "EEquippableCategory::Rifle",
+    "cost": 2050,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 50,
+        "headDamage": 115.5,
+        "bodyDamage": 35,
+        "legDamage": 29.75
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "獠犬",
+      "bulldog",
+      "斗牛犬"
+    ]
+  },
+  {
+    "cn": "幻影",
+    "en": "Phantom",
+    "category": "EEquippableCategory::Rifle",
+    "cost": 2900,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 20,
+        "headDamage": 156,
+        "bodyDamage": 39,
+        "legDamage": 33.15
+      },
+      {
+        "rangeStartMeters": 20,
+        "rangeEndMeters": 50,
+        "headDamage": 140,
+        "bodyDamage": 35,
+        "legDamage": 29.75
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "幻影",
+      "phantom",
+      "m4",
+      "m4a1"
+    ]
+  },
+  {
+    "cn": "判官",
+    "en": "Judge",
+    "category": "EEquippableCategory::Shotgun",
+    "cost": 1850,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 10,
+        "headDamage": 34,
+        "bodyDamage": 17,
+        "legDamage": 14.450001
+      },
+      {
+        "rangeStartMeters": 10,
+        "rangeEndMeters": 15,
+        "headDamage": 20,
+        "bodyDamage": 10,
+        "legDamage": 8.5
+      },
+      {
+        "rangeStartMeters": 15,
+        "rangeEndMeters": 50,
+        "headDamage": 14,
+        "bodyDamage": 7,
+        "legDamage": 5.9500003
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "判官",
+      "judge",
+      "连喷"
+    ]
+  },
+  {
+    "cn": "雄鹿",
+    "en": "Bucky",
+    "category": "EEquippableCategory::Shotgun",
+    "cost": 850,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 8,
+        "headDamage": 34,
+        "bodyDamage": 17,
+        "legDamage": 14
+      },
+      {
+        "rangeStartMeters": 8,
+        "rangeEndMeters": 12,
+        "headDamage": 26,
+        "bodyDamage": 13,
+        "legDamage": 11.05
+      },
+      {
+        "rangeStartMeters": 12,
+        "rangeEndMeters": 50,
+        "headDamage": 18,
+        "bodyDamage": 9,
+        "legDamage": 7.65
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "雄鹿",
+      "bucky",
+      "泵喷"
+    ]
+  },
+  {
+    "cn": "狂怒",
+    "en": "Frenzy",
+    "category": "EEquippableCategory::Sidearm",
+    "cost": 450,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 20,
+        "headDamage": 78,
+        "bodyDamage": 26,
+        "legDamage": 22.1
+      },
+      {
+        "rangeStartMeters": 20,
+        "rangeEndMeters": 50,
+        "headDamage": 63,
+        "bodyDamage": 21,
+        "legDamage": 17.85
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "狂怒",
+      "frenzy",
+      "小全自动"
+    ]
+  },
+  {
+    "cn": "标配",
+    "en": "Classic",
+    "category": "EEquippableCategory::Sidearm",
+    "cost": 0,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 30,
+        "headDamage": 78,
+        "bodyDamage": 26,
+        "legDamage": 22.1
+      },
+      {
+        "rangeStartMeters": 30,
+        "rangeEndMeters": 50,
+        "headDamage": 66,
+        "bodyDamage": 22,
+        "legDamage": 18.7
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "标配",
+      "classic",
+      "免费枪"
+    ]
+  },
+  {
+    "cn": "追猎",
+    "en": "Bandit",
+    "category": "EEquippableCategory::Sidearm",
+    "cost": 600,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 10,
+        "headDamage": 152,
+        "bodyDamage": 39,
+        "legDamage": 33
+      },
+      {
+        "rangeStartMeters": 10,
+        "rangeEndMeters": 30,
+        "headDamage": 128,
+        "bodyDamage": 39,
+        "legDamage": 33
+      },
+      {
+        "rangeStartMeters": 30,
+        "rangeEndMeters": 50,
+        "headDamage": 112,
+        "bodyDamage": 34,
+        "legDamage": 28
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "追猎",
+      "bandit",
+      "新手枪"
+    ]
+  },
+  {
+    "cn": "鬼魅",
+    "en": "Ghost",
+    "category": "EEquippableCategory::Sidearm",
+    "cost": 500,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 30,
+        "headDamage": 105,
+        "bodyDamage": 30,
+        "legDamage": 25.5
+      },
+      {
+        "rangeStartMeters": 30,
+        "rangeEndMeters": 50,
+        "headDamage": 87.5,
+        "bodyDamage": 25,
+        "legDamage": 21.25
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "鬼魅",
+      "ghost",
+      "幽灵"
+    ]
+  },
+  {
+    "cn": "正义",
+    "en": "Sheriff",
+    "category": "EEquippableCategory::Sidearm",
+    "cost": 800,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 30,
+        "headDamage": 159.5,
+        "bodyDamage": 55,
+        "legDamage": 46.75
+      },
+      {
+        "rangeStartMeters": 30,
+        "rangeEndMeters": 50,
+        "headDamage": 145,
+        "bodyDamage": 50,
+        "legDamage": 42.5
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "正义",
+      "sheriff",
+      "左轮",
+      "沙鹰",
+      "大左轮"
+    ]
+  },
+  {
+    "cn": "短炮",
+    "en": "Shorty",
+    "category": "EEquippableCategory::Sidearm",
+    "cost": 300,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 7,
+        "headDamage": 22,
+        "bodyDamage": 11,
+        "legDamage": 9.35
+      },
+      {
+        "rangeStartMeters": 7,
+        "rangeEndMeters": 15,
+        "headDamage": 12,
+        "bodyDamage": 6,
+        "legDamage": 5.1
+      },
+      {
+        "rangeStartMeters": 15,
+        "rangeEndMeters": 50,
+        "headDamage": 6,
+        "bodyDamage": 3,
+        "legDamage": 2.5500002
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "短炮",
+      "短喷",
+      "shorty",
+      "小手炮"
+    ]
+  },
+  {
+    "cn": "冥驹",
+    "en": "Operator",
+    "category": "EEquippableCategory::Sniper",
+    "cost": 4700,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 50,
+        "headDamage": 255,
+        "bodyDamage": 150,
+        "legDamage": 120
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "冥驹",
+      "冥狙",
+      "operator",
+      "大狙",
+      "op"
+    ]
+  },
+  {
+    "cn": "戍卫",
+    "en": "Guardian",
+    "category": "EEquippableCategory::Rifle",
+    "cost": 2250,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 50,
+        "headDamage": 195,
+        "bodyDamage": 65,
+        "legDamage": 48.75
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "戍卫",
+      "guardian",
+      "单发步枪",
+      "半自动"
+    ]
+  },
+  {
+    "cn": "莽侠",
+    "en": "Outlaw",
+    "category": "EEquippableCategory::Sniper",
+    "cost": 2400,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 50,
+        "headDamage": 238,
+        "bodyDamage": 140,
+        "legDamage": 119
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "莽侠",
+      "outlaw",
+      "双管狙",
+      "中狙"
+    ]
+  },
+  {
+    "cn": "飞将",
+    "en": "Marshal",
+    "category": "EEquippableCategory::Sniper",
+    "cost": 950,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 50,
+        "headDamage": 202,
+        "bodyDamage": 101,
+        "legDamage": 85.850006
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "飞将",
+      "marshal",
+      "鸟狙",
+      "轻狙"
+    ]
+  },
+  {
+    "cn": "骇灵",
+    "en": "Spectre",
+    "category": "EEquippableCategory::SMG",
+    "cost": 1600,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 15,
+        "headDamage": 78,
+        "bodyDamage": 26,
+        "legDamage": 22.1
+      },
+      {
+        "rangeStartMeters": 15,
+        "rangeEndMeters": 30,
+        "headDamage": 66,
+        "bodyDamage": 22,
+        "legDamage": 18.7
+      },
+      {
+        "rangeStartMeters": 30,
+        "rangeEndMeters": 50,
+        "headDamage": 60,
+        "bodyDamage": 20,
+        "legDamage": 17
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "骇灵",
+      "spectre",
+      "冲锋枪"
+    ]
+  },
+  {
+    "cn": "蜂刺",
+    "en": "Stinger",
+    "category": "EEquippableCategory::SMG",
+    "cost": 1100,
+    "damageRanges": [
+      {
+        "rangeStartMeters": 0,
+        "rangeEndMeters": 15,
+        "headDamage": 67.5,
+        "bodyDamage": 27,
+        "legDamage": 22.95
+      },
+      {
+        "rangeStartMeters": 15,
+        "rangeEndMeters": 50,
+        "headDamage": 57,
+        "bodyDamage": 23,
+        "legDamage": 19
+      }
+    ],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "蜂刺",
+      "stinger"
+    ]
+  },
+  {
+    "cn": "近战武器",
+    "en": "Melee",
+    "category": "EEquippableCategory::Melee",
+    "cost": null,
+    "damageRanges": [],
+    "source": "valorant-api.com zh-CN",
+    "updated_at": "2026-09-17",
+    "aliases": [
+      "刀",
+      "melee",
+      "匕首"
+    ]
+  }
+]

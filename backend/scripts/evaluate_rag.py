@@ -19,7 +19,7 @@ import time
 
 # ---------- 1. 先解析参数并设置环境变量（必须在 import config 之前） ----------
 parser = argparse.ArgumentParser(description="RAG 效果评估")
-parser.add_argument("--mode", choices=["baseline", "hybrid"], default="hybrid",
+parser.add_argument("--mode", choices=["baseline", "hybrid", "custom"], default="hybrid",
                     help="baseline=纯向量(旧v2管线) hybrid=改写+混合+重排(新v3管线)")
 parser.add_argument("--skip-llm", action="store_true", help="跳过答案生成，只测检索指标")
 parser.add_argument("--suite", default=None, help="自定义评测集路径（默认 backend/eval/eval_set.json）")
@@ -29,10 +29,11 @@ if args.mode == "baseline":
     os.environ["RAG_HYBRID"] = "0"
     os.environ["RAG_RERANK"] = "0"
     os.environ["RAG_QUERY_REWRITE"] = "0"
-else:
+elif args.mode == "hybrid":
     os.environ["RAG_HYBRID"] = "1"
     os.environ["RAG_RERANK"] = "1"
     os.environ["RAG_QUERY_REWRITE"] = "1"
+# custom：不覆盖任何环境变量，管线开关由外部传入（消融实验用）
 
 # ---------- 2. 导入项目模块 ----------
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
