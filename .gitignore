@@ -35,3 +35,6 @@ NUL
 # AOCI 本地工具产物与仓库级 AI 说明（不公开）
 .aoci/
 AGENTS.md
+aoci.txt
+aoci.code.txt
+aoci.meta.txt

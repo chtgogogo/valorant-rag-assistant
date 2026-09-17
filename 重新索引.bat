@@ -20,5 +20,5 @@ echo [2/2] 开始从 knowledge_base 同步并向量化...
 "%PY%" scripts\init_knowledge_base.py
 
 echo.
-echo 索引完成！前端访问 http://localhost:5173
+echo 索引完成！前端访问 http://localhost:5174
 pause
