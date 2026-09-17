@@ -31,3 +31,7 @@ Thumbs.db
 # 测试日志与系统保留名残留
 start_test.log
 NUL
+
+# AOCI 本地工具产物与仓库级 AI 说明（不公开）
+.aoci/
+AGENTS.md
