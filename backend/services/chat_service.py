@@ -28,6 +28,18 @@ llm = ChatOpenAI(
     max_tokens=LLM_CONFIG["max_tokens"],
     timeout=30  # 加超时，RAG场景prompt较长需要更长时间
 )
+
+# glm-4.7 系列是混合思考模型：不显式关闭思考时，答案会写进 reasoning_content、content 为空，
+# 界面上就是空白回答。langchain-openai 0.1.x 的 model_kwargs 走不到 openai SDK 的 extra_body
+# （会被 create() 当未知参数拒收），所以在这里包装 client.create 注入 extra_body。
+_THINKING_TYPE = "enabled" if LLM_CONFIG.get("thinking") else "disabled"
+_original_create = llm.client.create
+
+def _create_with_thinking(*args, **kwargs):
+    kwargs["extra_body"] = {**(kwargs.get("extra_body") or {}), "thinking": {"type": _THINKING_TYPE}}
+    return _original_create(*args, **kwargs)
+
+llm.client.create = _create_with_thinking
 # -------------------------- 大模型调用测试 --------------------------
 def test_llm_call(question: str) -> str:
     """测试大模型是否能正常调用，返回回答文本"""
@@ -155,7 +167,7 @@ def _call_llm_with_retry(prompt, inputs, max_retry=2):
             logger.error("大模型调用失败(第%d次) 输入=%s 错误=%s", i + 1, inputs, e)
             if i == max_retry:
                 return "抱歉，当前服务有点忙，请稍后再试~"
-            time.sleep(1)  # 等1秒后重试
+            time.sleep(3 * (i + 1))  # 递增退避：免费模型偶发限流(429)，等久一点再试
 
 
 def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple[str, list[dict], list[ChatMessage]]:
