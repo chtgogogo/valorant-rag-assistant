@@ -11,7 +11,7 @@
 - 重装 CUDA 版 torch（`2.12.1+cu126`），新增 `services/device_manager.py` 动态设备策略：启动时用 `torch.cuda.mem_get_info()` 检测整卡空闲显存（阈值 `GPU_MIN_FREE_MB=1536`），够就把向量 + 重排模型一起放上显卡；推理中捕获 `torch.cuda.OutOfMemoryError`，清空 CUDA 缓存后模型降级 CPU 原地重试，服务不中断。两个模型共用同一设备策略（同进同退，避免 PCIe 来回拷贝反而变慢）。
 - 新增 `USE_VECTOR_RETRIEVAL` 开关：关闭后仅走 BM25 关键词检索（与 `RAG_HYBRID` 组合可凑齐纯向量/混合/纯关键词全部形态）。
 - 新增质量自评 Critic：重排分数落在灰区 [0.60, `CRITIC_SCORE_HIGH`=0.75) 时，用带思考的模型评审"资料是否足以回答"；不足则换角度重写查询重检索，最多 `CRITIC_MAX_ITER=3` 轮、两轮结果择优；高分快速通道零额外延迟；每轮评审/重试全部写日志并进审计。
-- LLM 实例工厂化（`services/llm_factory.py`）：最终生成 / 查询改写 / 质量自评三个实例，各自独立思考开关（`LLM_THINKING` / `LLM_REWRITE_THINKING` / `LLM_CRITIC_THINKING`，默认 关/关/开）与分层超时（普通 30s、开思考 60s）。
+- LLM 实例工厂化（`services/llm_factory.py`）：最终生成 / 查询改写 / 质量自评三个实例，各自独立思考开关（`LLM_THINKING` / `LLM_REWRITE_THINKING` / `LLM_CRITIC_THINKING`，默认 开/开/关：改写与自评开思考提精度，最终答案生成关保速度）与分层超时（普通 30s、开思考 60s）；改写实例开思考时 token 上限自动放大到 1024（踩坑：思考文本会吃掉预算，128 下 content 为空静默降级——探针实测发现）并加一次退避重试抗免费档 429。
 - 评测升级：`eval_set.json` 补 17 题标准答案（数据取自官方 JSON），新增"标准答案语义相似度"指标（embedding 余弦），评测报告自动落盘 `backend/eval/reports/`。
 
 **解决了什么**
