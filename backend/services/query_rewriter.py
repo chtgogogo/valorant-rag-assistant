@@ -10,6 +10,8 @@ from config.settings import LLM_CONFIG, QUERY_REWRITE_PROMPT, RAG_CONFIG
 from schemas.models import ChatMessage
 
 import logging
+import time
+
 logger = logging.getLogger(__name__)
 
 # 改写用小模型参数：低温度、少 token、独立实例（v3.3 起走 llm_factory：
@@ -17,11 +19,13 @@ logger = logging.getLogger(__name__)
 # 改写会静默失效退回原问题；LLM_REWRITE_THINKING=1 可开思考换精度，超时自动放宽）
 from services.llm_factory import make_llm
 
+# 思考文本会占用 token 预算：开思考时上限放大到 1024，否则思考没写完就截断、content 为空
+_thinking_on = LLM_CONFIG.get("thinking_rewrite", False)
 _rewriter_llm = make_llm(
-    thinking=LLM_CONFIG.get("thinking_rewrite", False),
-    timeout=LLM_CONFIG["thinking_timeout"] if LLM_CONFIG.get("thinking_rewrite") else 8,
+    thinking=_thinking_on,
+    timeout=LLM_CONFIG["thinking_timeout"] if _thinking_on else 8,
     temperature=0.1,
-    max_tokens=128,
+    max_tokens=1024 if _thinking_on else 128,
 )
 
 # 常见指代/省略特征：命中才调大模型改写，首轮或完整问题直接跳过，省时省 token
@@ -61,10 +65,21 @@ def rewrite_query(question: str, history: list[ChatMessage]) -> str:
     ])
     try:
         chain = prompt | _rewriter_llm
-        response = chain.invoke({"history": history_text, "question": question})
+        response = None
+        for attempt in range(2):  # 免费档偶发 429：一次退避重试，仍失败才降级
+            try:
+                response = chain.invoke({"history": history_text, "question": question})
+                break
+            except Exception as e:
+                if attempt == 0:
+                    logger.warning("查询改写第1次失败(2s后重试): %s", e)
+                    time.sleep(2)
+                else:
+                    raise
         rewritten = response.content.strip().strip('"').strip("'")
-        # 改写结果为空或明显异常 → 用原问题
+        # 改写结果为空或明显异常 → 用原问题（常见原因：开思考后 token 上限被思考吃光）
         if not rewritten:
+            logger.warning("查询改写返回空 content（疑思考吃满 token 预算），降级用原问题")
             return question
         logger.info("查询改写: [%s] → [%s]", question, rewritten)
         return rewritten

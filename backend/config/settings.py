@@ -33,7 +33,7 @@ LLM_CONFIG = {
     # 需要深度推理时设 LLM_THINKING=1（免费模型限流时 _call_llm_with_retry 自动退避重试）
     "model_name": os.getenv("ZHIPU_MODEL", "glm-4.7-flash"),
     "thinking": os.getenv("LLM_THINKING", "0") == "1",            # 最终答案生成：默认关（保速度）
-    "thinking_rewrite": os.getenv("LLM_REWRITE_THINKING", "0") == "1",  # 查询改写：默认关（在等待关键路径上）
+    "thinking_rewrite": os.getenv("LLM_REWRITE_THINKING", "1") == "1",  # 查询改写：默认开（精度优先，多轮指代消解受益；在意延迟可设 0）
     "thinking_critic": os.getenv("LLM_CRITIC_THINKING", "1") == "1",    # 质量自评：默认开（精度收益最大）
     "temperature": float(os.getenv("LLM_TEMPERATURE", "0.2")),
     "max_tokens": int(os.getenv("LLM_MAX_TOKENS", "1024")),
