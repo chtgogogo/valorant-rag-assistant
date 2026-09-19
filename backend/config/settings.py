@@ -32,9 +32,13 @@ LLM_CONFIG = {
     # glm-4.7-flash：智谱免费模型（30B MoE）；RAG 要快、要有依据，默认关闭思考模式，
     # 需要深度推理时设 LLM_THINKING=1（免费模型限流时 _call_llm_with_retry 自动退避重试）
     "model_name": os.getenv("ZHIPU_MODEL", "glm-4.7-flash"),
-    "thinking": os.getenv("LLM_THINKING", "0") == "1",
+    "thinking": os.getenv("LLM_THINKING", "0") == "1",            # 最终答案生成：默认关（保速度）
+    "thinking_rewrite": os.getenv("LLM_REWRITE_THINKING", "0") == "1",  # 查询改写：默认关（在等待关键路径上）
+    "thinking_critic": os.getenv("LLM_CRITIC_THINKING", "1") == "1",    # 质量自评：默认开（精度收益最大）
     "temperature": float(os.getenv("LLM_TEMPERATURE", "0.2")),
     "max_tokens": int(os.getenv("LLM_MAX_TOKENS", "1024")),
+    "timeout": int(os.getenv("LLM_TIMEOUT", "30")),               # 普通调用超时
+    "thinking_timeout": int(os.getenv("LLM_THINKING_TIMEOUT", "60")),  # 开思考的调用放宽（思考本身 10~30s）
 }
 
 # 检查一下有没有读到密钥（如果没读到，程序直接报错提醒你）
@@ -75,6 +79,14 @@ CHAT_CONFIG = {
 #     开关均可用环境变量覆盖，方便答辩演示时对比效果
 # ------------------------------------------------------
 RAG_CONFIG = {
+    # 向量检索总开关（v3.3）：关闭后仅走 BM25 关键词检索；
+    # 注意 USE_VECTOR_RETRIEVAL=0 时 RAG_HYBRID 无意义（混合的前提是向量这一路存在）
+    "enable_vector_search": os.getenv("USE_VECTOR_RETRIEVAL", "1") == "1",
+    # 质量自评 Critic（v3.3）：重排分数落在 [阈值, CRITIC_SCORE_HIGH) 灰区时触发，
+    # 判断资料是否足以回答；不足则换写法重检索，最多 CRITIC_MAX_ITER 轮，全程写日志
+    "critic_enabled": os.getenv("RAG_CRITIC", "1") == "1",
+    "critic_max_iterations": int(os.getenv("CRITIC_MAX_ITER", "3")),
+    "critic_score_high": float(os.getenv("CRITIC_SCORE_HIGH", "0.75")),  # ≥此值跳过自评（高分快速通道）
     "top_k": 5,                      # 最终喂给大模型的资料条数
     "score_threshold": 0.35,         # 旧兜底阈值（纯向量模式用）
     "chunk_size": 500,

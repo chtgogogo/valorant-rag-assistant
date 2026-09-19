@@ -5,7 +5,6 @@
 # "幻影的伤害是多少"这样的独立完整问题，再做检索。
 # 设计要点：任何失败（超时/报错）都降级返回原问题，绝不阻塞主流程。
 # ------------------------------------------------------------
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from config.settings import LLM_CONFIG, QUERY_REWRITE_PROMPT, RAG_CONFIG
 from schemas.models import ChatMessage
@@ -13,14 +12,16 @@ from schemas.models import ChatMessage
 import logging
 logger = logging.getLogger(__name__)
 
-# 改写用小模型参数：低温度、少 token、短超时（独立于主回答模型，避免互相影响）
-_rewriter_llm = ChatOpenAI(
-    api_key=LLM_CONFIG["api_key"],
-    base_url=LLM_CONFIG["base_url"],
-    model=LLM_CONFIG["model_name"],
+# 改写用小模型参数：低温度、少 token、独立实例（v3.3 起走 llm_factory：
+# glm-4.7 混合思考模型必须显式关思考，否则答案写进 reasoning_content、content 为空，
+# 改写会静默失效退回原问题；LLM_REWRITE_THINKING=1 可开思考换精度，超时自动放宽）
+from services.llm_factory import make_llm
+
+_rewriter_llm = make_llm(
+    thinking=LLM_CONFIG.get("thinking_rewrite", False),
+    timeout=LLM_CONFIG["thinking_timeout"] if LLM_CONFIG.get("thinking_rewrite") else 8,
     temperature=0.1,
     max_tokens=128,
-    timeout=8,
 )
 
 # 常见指代/省略特征：命中才调大模型改写，首轮或完整问题直接跳过，省时省 token

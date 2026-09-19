@@ -117,20 +117,30 @@ def hybrid_search(question: str, kb_id: str = "valorant",
     if recall_k is None:
         recall_k = RAG_CONFIG["recall_k"]
 
-    # 向量召回（dense_score 保留余弦相似度，供兜底阈值判断）
-    dense = search_vector(question, kb_id, recall_k)
-    for r in dense:
-        r.dense_score = r.score
+    vector_on = RAG_CONFIG.get("enable_vector_search", True)
+    hybrid_on = RAG_CONFIG.get("enable_hybrid_search", True)
 
-    if not RAG_CONFIG.get("enable_hybrid_search", True):
-        return dense
+    # 向量召回（dense_score 保留余弦相似度，供兜底阈值判断）
+    dense: list[SearchResult] = []
+    if vector_on:
+        dense = search_vector(question, kb_id, recall_k)
+        for r in dense:
+            r.dense_score = r.score
+        if not hybrid_on:
+            return dense
+    elif hybrid_on:
+        # 向量关闭时 hybrid 开关无意义（融合的前提是两路并存），只走 BM25
+        logger.info("向量检索已关闭(USE_VECTOR_RETRIEVAL=0)，本次仅 BM25 关键词检索")
 
     # BM25 关键词召回
     try:
         sparse = bm25_search(question, kb_id, recall_k)
     except Exception as e:
-        logger.warning("BM25 召回失败(降级纯向量): %s", e)
+        logger.warning("BM25 召回失败(降级%s): %s", "空结果" if not vector_on else "纯向量", e)
         sparse = []
+
+    if not vector_on:
+        return sparse
 
     if not sparse:
         return dense
