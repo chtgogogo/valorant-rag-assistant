@@ -25,20 +25,25 @@ _cross_encoder = None
 
 
 def _get_cross_encoder() -> "CrossEncoder":
-    """懒加载 bge-reranker 模型（首次调用时从 hf-mirror 下载到 HF_HOME 缓存）"""
+    """懒加载 bge-reranker 模型（GPU 优先，OOM 自动降级 CPU；与向量模型共用设备策略，同进同退）"""
     global _cross_encoder
     if _cross_encoder is None:
         # 延迟导入：同样是避免启动时把 torch 拖进来
         from sentence_transformers import CrossEncoder
+        from services.device_manager import get_device, is_oom_error, degrade_to_cpu
         model_name = RAG_CONFIG["rerank_model"]
         if "/" not in model_name:
             model_name = f"BAAI/{model_name}"
-        print(f"[重排序] 正在加载 Rerank 模型: {model_name} ...")
-        _cross_encoder = CrossEncoder(
-            model_name,
-            device=EMBEDDING_CONFIG["device"],
-            max_length=512,
-        )
+        device = get_device()
+        print(f"[重排序] 正在加载 Rerank 模型: {model_name} (device={device}) ...")
+        try:
+            _cross_encoder = CrossEncoder(model_name, device=device, max_length=512)
+        except Exception as e:
+            if is_oom_error(e) and device == "cuda":
+                degrade_to_cpu(None)
+                _cross_encoder = CrossEncoder(model_name, device="cpu", max_length=512)
+            else:
+                raise
         print("[重排序] Rerank 模型加载完成")
     return _cross_encoder
 
@@ -66,7 +71,16 @@ def rerank(question: str, candidates: list[SearchResult],
     try:
         model = _get_cross_encoder()
         pairs = [(question, c.content) for c in candidates]
-        raw_scores = model.predict(pairs, show_progress_bar=False)
+        try:
+            raw_scores = model.predict(pairs, show_progress_bar=False)
+        except Exception as e:
+            # 推理中爆显存：模型降级 CPU 后原地重试一次（GPU 被游戏抢占的场景）
+            from services.device_manager import is_oom_error, degrade_to_cpu
+            if is_oom_error(e) and str(getattr(model, "device", "")) != "cpu":
+                degrade_to_cpu(model)
+                raw_scores = model.predict(pairs, show_progress_bar=False)
+            else:
+                raise
         # bge-reranker 输出 logit，过 sigmoid 转成 0~1 的置信分
         scores = [1.0 / (1.0 + math.exp(-float(s))) for s in raw_scores]
 

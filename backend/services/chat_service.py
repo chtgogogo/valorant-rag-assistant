@@ -1,7 +1,7 @@
 import os
 import json
+import re
 import time
-from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from config.settings import (
     LLM_CONFIG, SYSTEM_PROMPT, CHAT_CONFIG, RAG_CONFIG,
@@ -11,6 +11,7 @@ from schemas.models import ChatMessage, SearchResult
 from utils.sensitive import filter_sensitive
 from utils.audit import log_qa
 from services.official_data_service import answer_official_data_query, expand_query_aliases, replace_aliases_with_official
+from services.llm_factory import make_llm
 
 import logging
 logging.basicConfig(
@@ -19,27 +20,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 全局大模型实例
-llm = ChatOpenAI(
-    api_key=LLM_CONFIG["api_key"],
-    base_url=LLM_CONFIG["base_url"],
-    model=LLM_CONFIG["model_name"],
-    temperature=LLM_CONFIG["temperature"],
-    max_tokens=LLM_CONFIG["max_tokens"],
-    timeout=30  # 加超时，RAG场景prompt较长需要更长时间
-)
-
-# glm-4.7 系列是混合思考模型：不显式关闭思考时，答案会写进 reasoning_content、content 为空，
-# 界面上就是空白回答。langchain-openai 0.1.x 的 model_kwargs 走不到 openai SDK 的 extra_body
-# （会被 create() 当未知参数拒收），所以在这里包装 client.create 注入 extra_body。
-_THINKING_TYPE = "enabled" if LLM_CONFIG.get("thinking") else "disabled"
-_original_create = llm.client.create
-
-def _create_with_thinking(*args, **kwargs):
-    kwargs["extra_body"] = {**(kwargs.get("extra_body") or {}), "thinking": {"type": _THINKING_TYPE}}
-    return _original_create(*args, **kwargs)
-
-llm.client.create = _create_with_thinking
+# 全局大模型实例（v3.3：按环节拆分，各自独立思考开关与超时，见 llm_factory）
+llm = make_llm(LLM_CONFIG.get("thinking", False), LLM_CONFIG["timeout"])                # 最终答案生成：默认关思考
+llm_rewrite = make_llm(LLM_CONFIG.get("thinking_rewrite", False),
+                       LLM_CONFIG["thinking_timeout"] if LLM_CONFIG.get("thinking_rewrite") else LLM_CONFIG["timeout"])  # 查询改写
+llm_critic = make_llm(LLM_CONFIG.get("thinking_critic", True), LLM_CONFIG["thinking_timeout"])  # 质量自评：默认开思考
 # -------------------------- 大模型调用测试 --------------------------
 def test_llm_call(question: str) -> str:
     """测试大模型是否能正常调用，返回回答文本"""
@@ -124,6 +109,111 @@ def _dedupe_results(results: list[SearchResult]) -> list[SearchResult]:
     return out
 
 
+# -------------------------- 质量自评 Critic（v3.3） --------------------------
+# 定位：重排分数落在 [拒答阈值, CRITIC_SCORE_HIGH) 灰区时，用带思考的模型评估
+# "检索资料是否足以回答"；不足则换角度重写查询再检索，最多 critic_max_iterations 轮。
+# 每轮评估/重试全部写日志（logger + 返回 critic_log 供审计），行为可由 RAG_CRITIC=0 关闭。
+_CRITIC_PROMPT = ChatPromptTemplate.from_messages([
+    ("system",
+     "你是RAG检索质量评审员。给你用户问题和检索到的资料片段，判断资料是否足以回答该问题。"
+     "只输出JSON，格式：{{\"sufficient\": true或false, \"missing\": \"不足时缺什么信息（一句话，足够则留空）\"}}。不要输出任何其他内容。"),
+    ("human", "用户问题：{question}\n\n检索到的资料：\n{context}"),
+])
+
+_ALT_QUERY_PROMPT = ChatPromptTemplate.from_messages([
+    ("system",
+     "你是查询改写助手。上一次检索用的查询没有找到足够资料。请换一个角度或用词重写这个查询"
+     "（换同义词/上位词/拆出更具体的子问题，不要重复原查询）。只输出改写后的查询本身，不要解释。"),
+    ("human", "用户原始问题：{question}\n上一次查询：{rewritten}\n资料中缺少：{missing}\n请输出新查询："),
+])
+
+
+def _critic_judge(question: str, results: list[SearchResult]) -> dict:
+    """让带思考的模型评估检索资料充分性；任何失败都视为'足够'（不阻塞主流程）"""
+    context = "\n".join(
+        f"[{i + 1}]（来源：{r.source}，分数{r.score}）{r.content[:200]}"
+        for i, r in enumerate(results[:5])
+    )
+    try:
+        raw = _call_llm_with_retry(_CRITIC_PROMPT,
+                                   {"question": question, "context": context},
+                                   model=llm_critic)
+        m = re.search(r"\{.*\}", raw or "", re.DOTALL)
+        return json.loads(m.group(0)) if m else {"sufficient": True}
+    except Exception as e:
+        logger.warning("[Critic] 评审调用失败(按'足够'处理，不阻塞): %s", e)
+        return {"sufficient": True}
+
+
+def _generate_alternative_query(question: str, rewritten: str, missing: str) -> str | None:
+    """生成换角度的替代查询；失败返回 None（调用方结束循环）"""
+    try:
+        raw = _call_llm_with_retry(_ALT_QUERY_PROMPT,
+                                   {"question": question, "rewritten": rewritten, "missing": missing},
+                                   model=llm_rewrite)
+        alt = (raw or "").strip().splitlines()[0].strip().strip('"')
+        return alt or None
+    except Exception as e:
+        logger.warning("[Critic] 替代查询生成失败: %s", e)
+        return None
+
+
+def _critic_refine(question: str, rewritten: str, results: list[SearchResult],
+                   kb_id: str) -> tuple[str, list[SearchResult], list[dict]]:
+    """
+    质量自评主流程（在三级检索管线之后、生成之前执行）：
+      1. 高分快速通道：top1 ≥ CRITIC_SCORE_HIGH 直接放行（绝大多数问题走这里，零额外延迟）
+      2. 灰区：评估资料充分性 → 不足则换写法重检索，取两轮中 top1 更高者
+      3. 全程 logger.info 留痕，并返回逐轮 critic_log
+    :return: (最终用于检索的问题, 最终结果列表, critic_log)
+    """
+    critic_log: list[dict] = []
+    if not RAG_CONFIG.get("critic_enabled", True) or not results:
+        return rewritten, results, critic_log
+    if not RAG_CONFIG.get("enable_rerank", True):
+        return rewritten, results, critic_log  # 无 rerank 置信分，灰区无从判断
+
+    high = RAG_CONFIG.get("critic_score_high", 0.75)
+    best_q, best_r = rewritten, results
+    max_iter = RAG_CONFIG.get("critic_max_iterations", 3)
+
+    from services.hybrid_retriever import hybrid_search
+    from services.reranker import rerank as _rerank
+
+    for i in range(1, max_iter + 1):
+        top1 = best_r[0].score
+        if top1 >= high:
+            logger.info("[Critic] 第%d轮跳过：top1=%.3f ≥ %.2f 高分快速通道", i, top1, high)
+            critic_log.append({"iter": i, "action": "skip", "top1": top1})
+            break
+
+        verdict = _critic_judge(question, best_r)
+        sufficient = bool(verdict.get("sufficient", True))
+        missing = (verdict.get("missing") or "").strip()
+        critic_log.append({"iter": i, "action": "judge", "top1": top1,
+                           "sufficient": sufficient, "missing": missing})
+        logger.info("[Critic] 第%d轮评估: top1=%.3f sufficient=%s missing=%s",
+                    i, top1, sufficient, missing or "-")
+        if sufficient:
+            break
+
+        alt = _generate_alternative_query(question, best_q, missing or "与问题直接相关的资料")
+        if not alt or alt == best_q:
+            critic_log.append({"iter": i, "action": "no_alt"})
+            logger.info("[Critic] 第%d轮未能生成不同的替代查询，结束", i)
+            break
+
+        candidates = hybrid_search(alt, kb_id)
+        new_results = _rerank(alt, candidates)
+        new_top1 = new_results[0].score if new_results else 0.0
+        critic_log.append({"iter": i, "action": "retry", "alt_query": alt, "new_top1": new_top1})
+        logger.info("[Critic] 第%d轮重检索: 「%s」 top1=%.3f（原 %.3f）", i, alt, new_top1, top1)
+        if new_top1 > top1:
+            best_q, best_r = alt, new_results
+
+    return best_q, best_r, critic_log
+
+
 def _build_sources(results: list[SearchResult]) -> list[dict]:
     results = _dedupe_results(results)
     return [
@@ -156,11 +246,12 @@ def _build_rag_messages(history: list[ChatMessage], results: list[SearchResult],
     return ChatPromptTemplate.from_messages(messages)
 
 
-def _call_llm_with_retry(prompt, inputs, max_retry=2):
-    """大模型调用带重试：失败自动重试，最终失败返回友好提示（真实错误已写入日志）"""
+def _call_llm_with_retry(prompt, inputs, max_retry=2, model=None):
+    """大模型调用带重试：失败自动重试，最终失败返回友好提示（真实错误已写入日志）
+    :param model: 指定环节实例（llm_rewrite/llm_critic），默认用最终答案生成实例"""
     for i in range(max_retry + 1):
         try:
-            chain = prompt | llm
+            chain = prompt | (model or llm)
             response = chain.invoke(inputs)
             return response.content
         except Exception as e:
@@ -205,10 +296,14 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple
     # 3. 加载历史
     history = load_history(session_id)
 
-    # 4~6. 三级检索管线：改写 → 混合召回 → 重排
+    # 4~6. 三级检索管线：改写 → 混合召回 → 重排（+ v3.3 质量自评 Critic）
     rewritten, results = _retrieve(question_for_prompt, history, kb_id)
+    rewritten, results, critic_log = _critic_refine(question_for_prompt, rewritten, results, kb_id)
     pipeline_desc = ("hybrid+rerank" if RAG_CONFIG.get("enable_rerank") else "hybrid") \
         if RAG_CONFIG.get("enable_hybrid_search") else "vector"
+    retries = sum(1 for c in critic_log if c.get("action") == "retry")
+    if retries:
+        pipeline_desc += f"+critic{retries}"
 
     # 7. 低置信兜底
     if _should_fallback(results):
@@ -271,6 +366,7 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
     question_for_prompt = replace_aliases_with_official(question)
     history = load_history(session_id)
     rewritten, results = _retrieve(question_for_prompt, history, kb_id)
+    rewritten, results, _critic_log = _critic_refine(question_for_prompt, rewritten, results, kb_id)
     pipeline_desc = ("hybrid+rerank" if RAG_CONFIG.get("enable_rerank") else "hybrid") \
         if RAG_CONFIG.get("enable_hybrid_search") else "vector"
 

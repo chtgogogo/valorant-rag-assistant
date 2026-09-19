@@ -17,21 +17,27 @@ _chroma_client = None
 
 
 def _get_embedding_model():
-    """懒加载 bge-small-zh-v1.5 embedding 模型"""
+    """懒加载 bge-small-zh-v1.5 embedding 模型（GPU 优先，OOM 自动降级 CPU）"""
     global _embedding_model
     if _embedding_model is None:
         # 延迟导入：sentence_transformers 会把 torch 一起拉进来（约 1.5GB），
         # 挪到真正要用模型的时候才 import，进程启动就轻得多
         from sentence_transformers import SentenceTransformer
+        from services.device_manager import get_device, is_oom_error, degrade_to_cpu
         model_name = EMBEDDING_CONFIG["model_name"]
         # bge 系列模型在 HuggingFace 上的完整路径是 BAAI/xxx，配置里写的是简写
         if "/" not in model_name:
             model_name = f"BAAI/{model_name}"
-        print(f"[向量引擎] 正在加载 Embedding 模型: {model_name} ...")
-        _embedding_model = SentenceTransformer(
-            model_name,
-            device=EMBEDDING_CONFIG["device"]
-        )
+        device = get_device()
+        print(f"[向量引擎] 正在加载 Embedding 模型: {model_name} (device={device}) ...")
+        try:
+            _embedding_model = SentenceTransformer(model_name, device=device)
+        except Exception as e:
+            if is_oom_error(e) and device == "cuda":
+                degrade_to_cpu(None)
+                _embedding_model = SentenceTransformer(model_name, device="cpu")
+            else:
+                raise
         print("[向量引擎] Embedding 模型加载完成")
     return _embedding_model
 

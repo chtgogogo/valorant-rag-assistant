@@ -25,6 +25,9 @@ parser.add_argument("--skip-llm", action="store_true", help="跳过答案生成�
 parser.add_argument("--suite", default=None, help="自定义评测集路径（默认 backend/eval/eval_set.json）")
 args = parser.parse_args()
 
+# v3.3：评测默认关质量自评 Critic（它是对话层增强，开了会让评测变慢且混入重试；需要时可显式 RAG_CRITIC=1）
+os.environ.setdefault("RAG_CRITIC", "0")
+
 if args.mode == "baseline":
     os.environ["RAG_HYBRID"] = "0"
     os.environ["RAG_RERANK"] = "0"
@@ -63,6 +66,8 @@ def main():
     mrr_sum = 0.0    # MRR 累计
     kw_total = 0     # 期望关键词总数
     kw_hit = 0       # 命中的关键词数
+    sim_sum = 0.0    # 标准答案语义相似度累计（v3.3）
+    sim_cnt = 0      # 有标准答案的题数
     refusal_total = 0
     refusal_ok = 0
     details = []
@@ -116,6 +121,15 @@ def main():
             missing = [k for k in kws if k not in answer]
             kw_hit += len(kws) - len(missing)
             row["missing_keywords"] = missing
+            # v3.3 标准答案语义相似度：答案 vs 参考答案的 embedding 余弦（1.0=语义一致）
+            ref = case.get("reference_answer")
+            if ref:
+                from services.vector_service import _get_embedding_model
+                emb = _get_embedding_model().encode([answer, ref], normalize_embeddings=True)
+                sim = float(emb[0] @ emb[1])
+                sim_sum += sim
+                sim_cnt += 1
+                row["ref_similarity"] = round(sim, 3)
         details.append(row)
 
     # ---- 汇总输出 ----
@@ -131,9 +145,35 @@ def main():
     print(f"  检索 MRR        : {mrr_sum/retrieval_cases:.3f}")
     if not args.skip_llm:
         print(f"  答案关键词覆盖  : {kw_hit}/{kw_total} = {kw_hit/kw_total:.1%}")
+        if sim_cnt:
+            print(f"  标准答案相似度  : {sim_sum/sim_cnt:.3f}（{sim_cnt} 题有 reference_answer，语义余弦 1.0=一致）")
     if refusal_total:
         print(f"  拒答正确率      : {refusal_ok}/{refusal_total} = {refusal_ok/refusal_total:.0%}")
     print(f"{'='*62}\n")
+
+    # v3.3：评测报告落盘 backend/eval/reports/，方便对比历次结果
+    try:
+        import datetime
+        rep_dir = os.path.join(BACKEND_DIR, "eval", "reports")
+        os.makedirs(rep_dir, exist_ok=True)
+        rep = os.path.join(rep_dir, f"report_{args.mode}_{datetime.datetime.now():%Y%m%d_%H%M%S}.md")
+        with open(rep, "w", encoding="utf-8") as f:
+            f.write(f"# 评测报告 {args.mode}（{datetime.datetime.now():%Y-%m-%d %H:%M:%S}）\n\n")
+            f.write(f"- 用例：{len(cases)} 条（检索 {retrieval_cases} + 拒答 {refusal_total}）｜ 生成：{'关' if args.skip_llm else '开'}\n")
+            f.write(f"- Hit@5: {hit_cnt}/{retrieval_cases}｜MRR: {mrr_sum/retrieval_cases:.3f}\n")
+            if not args.skip_llm:
+                f.write(f"- 关键词覆盖: {kw_hit}/{kw_total}\n")
+                if sim_cnt:
+                    f.write(f"- 标准答案相似度: {sim_sum/sim_cnt:.3f}（{sim_cnt} 题）\n")
+            if refusal_total:
+                f.write(f"- 拒答正确率: {refusal_ok}/{refusal_total}\n\n")
+            f.write("| id | 类型 | 结果 | 耗时ms | 问题 |\n|---|---|---|---|---|\n")
+            for r in details:
+                flag = "✓拒答" if r.get("refused") else (f"命中@{r['hit_rank']}" if r.get("hit_rank") else "✗未命中")
+                f.write(f"| {r['id']} | {r['type']} | {flag} | {r.get('retrieve_ms', '-')} | {r['question'][:30]} |\n")
+        print(f"  报告已保存: {rep}")
+    except Exception as e:
+        print(f"  报告落盘失败(不影响评测): {e}")
 
 
 if __name__ == "__main__":
