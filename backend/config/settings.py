@@ -34,7 +34,7 @@ LLM_CONFIG = {
     "model_name": os.getenv("ZHIPU_MODEL", "glm-4.7-flash"),
     "thinking": os.getenv("LLM_THINKING", "0") == "1",            # 最终答案生成：默认关（保速度）
     "thinking_rewrite": os.getenv("LLM_REWRITE_THINKING", "1") == "1",  # 查询改写：默认开（精度优先，多轮指代消解受益；在意延迟可设 0）
-    "thinking_critic": os.getenv("LLM_CRITIC_THINKING", "1") == "1",    # 质量自评：默认开（精度收益最大）
+    "thinking_critic": os.getenv("LLM_CRITIC_THINKING", "0") == "1",    # 质量自评：默认关（二元判断任务思考增益小，实测见 Layer3 标注集 A/B）
     "temperature": float(os.getenv("LLM_TEMPERATURE", "0.2")),
     "max_tokens": int(os.getenv("LLM_MAX_TOKENS", "1024")),
     "timeout": int(os.getenv("LLM_TIMEOUT", "30")),               # 普通调用超时
