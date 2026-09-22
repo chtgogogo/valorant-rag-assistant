@@ -27,10 +27,14 @@ app.add_middleware(
 from routers.document_router import doc_router
 from routers.vector_router import vector_router
 from routers.chat_router import chat_router
+from routers.ticket_router import ticket_router
+from routers.domain_router import domain_router
 # 企业化预留：AUTH_ENABLED=1 时所有 /api 接口要求 X-API-Key 请求头
 app.include_router(doc_router, prefix="/api/document", tags=["知识库文档"], dependencies=[Depends(verify_api_key)])
 app.include_router(vector_router, prefix="/api/vector", tags=["向量检索"], dependencies=[Depends(verify_api_key)])
 app.include_router(chat_router, prefix="/api/chat", tags=["对话业务"], dependencies=[Depends(verify_api_key)])
+app.include_router(ticket_router, prefix="/api/ticket", tags=["售后工单"], dependencies=[Depends(verify_api_key)])
+app.include_router(domain_router, prefix="/api/domain", tags=["领域切换"], dependencies=[Depends(verify_api_key)])
 
 # 审计日志查询接口（运维排查用）
 @app.get("/api/audit/recent", tags=["审计日志"], summary="查询最近N天问答审计记录")

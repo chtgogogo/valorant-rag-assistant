@@ -13,15 +13,32 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 # ------------------------------------------------------
 # 0. 领域皮肤配置（企业化改造关键）
-#    换领域 = 复制 domain_profiles/valorant.yaml 改内容，
-#    再设环境变量 APP_DOMAIN=新领域名，代码零修改
+#    启动时加载 domain_profiles/ 下全部领域 → DOMAIN_PROFILES，
+#    默认领域由 APP_DOMAIN 指定；运行时按 kb_id 取对应领域配置
+#    （get_profile），实现前端一键切换、无需重启进程。
+#    换新领域 = 复制任一 yaml 改内容放进该目录即可。
 # ------------------------------------------------------
 DOMAIN = os.getenv("APP_DOMAIN", "valorant")
-_PROFILE_PATH = Path(__file__).resolve().parent / "domain_profiles" / f"{DOMAIN}.yaml"
-if not _PROFILE_PATH.exists():
-    raise ValueError(f"❌ 领域皮肤配置不存在: {_PROFILE_PATH}，请在 config/domain_profiles/ 下创建")
-with open(_PROFILE_PATH, "r", encoding="utf-8") as _f:
-    DOMAIN_PROFILE = yaml.safe_load(_f)
+_PROFILES_DIR = Path(__file__).resolve().parent / "domain_profiles"
+DOMAIN_PROFILES: dict[str, dict] = {}
+for _p in sorted(_PROFILES_DIR.glob("*.yaml")):
+    with open(_p, "r", encoding="utf-8") as _f:
+        DOMAIN_PROFILES[_p.stem] = yaml.safe_load(_f) or {}
+if not DOMAIN_PROFILES:
+    raise ValueError(f"❌ 领域皮肤目录为空: {_PROFILES_DIR}，至少需要一个领域配置")
+if DOMAIN not in DOMAIN_PROFILES:
+    raise ValueError(f"❌ APP_DOMAIN={DOMAIN} 的领域配置不存在，可用: {list(DOMAIN_PROFILES)}")
+
+# 默认领域的配置（模块级常量保留：不传 kb_id 的旧代码路径仍指向默认领域）
+DOMAIN_PROFILE = DOMAIN_PROFILES[DOMAIN]
+_PROFILE_PATH = _PROFILES_DIR / f"{DOMAIN}.yaml"  # 兼容旧引用（仅路径展示用）
+
+
+def get_profile(kb_id: str = None) -> dict:
+    """运行时按知识库ID取领域配置（kb_id 与领域同名）；未知 kb_id 回退默认领域"""
+    if kb_id and kb_id in DOMAIN_PROFILES:
+        return DOMAIN_PROFILES[kb_id]
+    return DOMAIN_PROFILE
 
 # ------------------------------------------------------
 # 1. 大模型配置（从 .env 读取密钥，绝不硬编码）
@@ -120,6 +137,16 @@ REFUSE_ANSWER = DOMAIN_PROFILE["refuse_answer"]
 QUERY_REWRITE_PROMPT = DOMAIN_PROFILE.get("query_rewrite_prompt", "")
 
 SYSTEM_PROMPT = DOMAIN_PROFILE["system_prompt"]
+
+# ------------------------------------------------------
+# 5.4 工单闭环配置（v3.5：低置信兜底 → 自动建工单 → 人工答案回流知识库）
+# ------------------------------------------------------
+TICKET_CONFIG = {
+    "enabled": os.getenv("TICKET_ENABLED", "1") == "1",   # 总开关（评测对比时可关）
+    "db_path": str(DATA_DIR / "tickets.db"),
+    "auto_create": os.getenv("TICKET_AUTO_CREATE", "1") == "1",  # 兜底时自动建工单
+    "cooldown_minutes": int(os.getenv("TICKET_COOLDOWN", "30")),  # 同会话同问题的建单冷却（分钟），防刷单
+}
 
 # 敏感词表（通用安全层，与领域无关；企业部署时可按需扩充）
 SENSITIVE_WORDS = ["操你妈", "傻逼", "妈的", "废物", "脑残"]

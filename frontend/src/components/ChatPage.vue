@@ -12,7 +12,7 @@
          <span class="sidebar-title">知识库</span>
          <button class="sidebar-close" @click="sidebarOpen = false"><svg class="close-icon" viewBox="0 0 16 16"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg></button>
        </div>
-       <div class="sidebar-categories">
+       <div class="sidebar-categories" v-if="currentKb === 'valorant'">
          <div class="cat-section" v-for="cat in kbCategories" :key="cat.name">
            <div class="cat-header" @click="cat.open = !cat.open">
  <span class="cat-icon" v-html="cat.icon"></span>
@@ -25,6 +25,12 @@
                <span class="item-badge" v-if="item.badge">{{ item.badge }}</span>
              </div>
            </div>
+         </div>
+       </div>
+       <div class="sidebar-categories" v-else>
+         <div class="domain-info-card">
+           <div class="info-title">{{ currentAppName }}</div>
+           <p class="info-desc">当前知识库：<b>{{ currentKb }}</b>。快捷问题见欢迎屏，也可直接输入售后问题。</p>
          </div>
        </div>
        <div class="sidebar-footer">
@@ -57,11 +63,20 @@
              </svg>
            </div>
            <div class="brand-text">
-             <h1>无畏契约<span class="accent"> 知识问答</span></h1>
-             <p>基于 RAG 的无畏契约战术问答系统</p>
+             <h1>{{ currentAppName }}</h1>
+             <p>基于 RAG 的多领域智能问答 · 当前知识库：{{ currentKb }}</p>
            </div>
          </div>
          <div class="header-tools">
+           <div class="domain-switch" title="一键切换知识库 / 领域">
+             <button
+               v-for="d in domains"
+               :key="d.domain"
+               class="domain-btn"
+               :class="{ active: currentKb === d.domain }"
+               @click="switchDomain(d)"
+             >{{ d.short_name || d.app_name }}</button>
+           </div>
            <div class="connection-badge" :class="{ connected: backendOnline }">
              <span class="badge-dot"></span>
              <span class="badge-label">{{ backendOnline ? '已连接' : '未连接' }}</span>
@@ -87,8 +102,8 @@
               <polygon points="50,8 88,28 88,72 50,92 12,72 12,28" fill="none" stroke="#ff4655" stroke-width="2.5"/>
               <text x="50" y="62" text-anchor="middle" fill="#ff4655" font-weight="900" font-size="36" font-style="italic">V</text>
             </svg>
-            <h2 class="hero-title">无畏契约知识问答</h2>
-            <p class="hero-desc">随时问我英雄技能、武器属性、地图策略，秒回答案</p>
+            <h2 class="hero-title">{{ currentAppName }}</h2>
+            <p class="hero-desc">{{ currentKb === 'valorant' ? '随时问我英雄技能、武器属性、地图策略，秒回答案' : '退换货、价保、物流、三包等售后问题直接问；答不上的会自动转人工工单' }}</p>
           </div>
           <div class="quick-grid">
             <div
@@ -184,10 +199,10 @@
  </template>
 
 <script setup>
-import { ref, reactive, nextTick, onMounted } from 'vue'
+import { ref, reactive, nextTick, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Marked } from 'marked'
-import { sendMessage, sendMessageStream, clearHistory, rollbackHistory, testChat } from '../api.js'
+import { sendMessage, sendMessageStream, clearHistory, rollbackHistory, testChat, getDomains } from '../api.js'
 
 const emit = defineEmits(['manage'])
 
@@ -200,6 +215,24 @@ const loading = ref(false)
 const backendOnline = ref(false)
 const messagesContainer = ref(null)
 const inputRef = ref(null)
+
+// ---- 领域切换（v3.6）：kb_id 即领域键，提示词/话术/快捷问题整套跟随 ----
+const domains = ref([])
+const currentKb = ref('valorant')
+const currentProfile = computed(() =>
+  domains.value.find((d) => d.domain === currentKb.value) || null
+)
+const currentAppName = computed(
+  () => currentProfile.value?.app_name || '智能问答'
+)
+async function switchDomain(d) {
+  if (d.domain === currentKb.value) return
+  currentKb.value = d.domain
+  // 跨域对话上下文不通用：清空当前会话
+  messages.value = []
+  try { await clearHistory(sessionId) } catch { /* 静默 */ }
+  ElMessage.success(`已切换到「${d.app_name}」知识库`)
+}
 
 let msgCounter = 0
 const sessionId = 'web_' + Date.now()
@@ -250,14 +283,23 @@ const sessionId = 'web_' + Date.now()
    }
  ])
  
- const quickQuestions = [
-   { emoji: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><path d="M14 9l-2 2m0 0l-4 4m4-4l2 2m-2-2l-2-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',  label: '捷风怎么玩?', text: '捷风怎么玩？' },
-   { emoji: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><rect x="3" y="10" width="12" height="4" rx="1" stroke="currentColor" stroke-width="2"/><path d="M15 12h4l3-3v6l-3-3h-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',  label: '狂徒 vs 幻影', text: '狂徒和幻影哪个好？' },
-   { emoji: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><path d="M9 3L3 9l6 6-6 6 18 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="15" cy="7" r="2" stroke="currentColor" stroke-width="2"/></svg>',  label: '源工重镇地图攻略', text: '源工重镇地图怎么打？' },
-   { emoji: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" stroke-width="2"/><path d="M9 10h.01M15 10h.01" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M9 15a3 3 0 006 0H9z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',  label: '新手英雄推荐', text: '新手适合用什么英雄？' },
-   { emoji: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><path d="M12 2a7 7 0 00-7 7c0 2.4 1.2 4.5 3 5.7V18a2 2 0 002 2h4a2 2 0 002-2v-3.3c1.8-1.2 3-3.3 3-5.7a7 7 0 00-7-7z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M10 21h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',  label: '游戏机制讲解', text: '游戏基本机制是什么？' },
-   { emoji: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><path d="M12 2a10 10 0 00-10 10v8l3-3 3 3 3-3 3 3 3-3 3 3v-8a10 10 0 00-10-10z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="9" cy="11" r="1" fill="currentColor" opacity="0.5"/><circle cx="15" cy="11" r="1" fill="currentColor" opacity="0.5"/></svg>',  label: '幽影技能介绍', text: '幽影技能介绍' },
- ]
+const VALORANT_QUICK = [
+ { emoji: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><path d="M14 9l-2 2m0 0l-4 4m4-4l2 2m-2-2l-2-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',  label: '捷风怎么玩?', text: '捷风怎么玩？' },
+ { emoji: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><rect x="3" y="10" width="12" height="4" rx="1" stroke="currentColor" stroke-width="2"/><path d="M15 12h4l3-3v6l-3-3h-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',  label: '狂徒 vs 幻影', text: '狂徒和幻影哪个好？' },
+ { emoji: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><path d="M9 3L3 9l6 6-6 6 18 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="15" cy="7" r="2" stroke="currentColor" stroke-width="2"/></svg>',  label: '源工重镇地图攻略', text: '源工重镇地图怎么打？' },
+ { emoji: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" stroke-width="2"/><path d="M9 10h.01M15 10h.01" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M9 15a3 3 0 006 0H9z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',  label: '新手英雄推荐', text: '新手适合用什么英雄？' },
+ { emoji: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><path d="M12 2a7 7 0 00-7 7c0 2.4 1.2 4.5 3 5.7V18a2 2 0 002 2h4a2 2 0 002-2v-3.3c1.8-1.2 3-3.3 3-5.7a7 7 0 00-7-7z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M10 21h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',  label: '游戏机制讲解', text: '游戏基本机制是什么？' },
+ { emoji: '<svg class="icon-cat" viewBox="0 0 24 24" fill="none"><path d="M12 2a10 10 0 00-10 10v8l3-3 3 3 3-3 3 3 3-3 3 3v-8a10 10 0 00-10-10z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="9" cy="11" r="1" fill="currentColor" opacity="0.5"/><circle cx="15" cy="11" r="1" fill="currentColor" opacity="0.5"/></svg>',  label: '幽影技能介绍', text: '幽影技能介绍' },
+]
+
+// 当前领域的快捷问题：领域配置有 quick_questions 用之（如电商售后），否则回退游戏默认
+const quickQuestions = computed(() => {
+  const fromDomain = currentProfile.value?.quick_questions || []
+  if (fromDomain.length) {
+    return fromDomain.map((q) => ({ emoji: q.emoji || '', label: q.label, text: q.text }))
+  }
+  return VALORANT_QUICK
+})
  
  function quickAsk(text) {
    inputText.value = text
@@ -349,7 +391,7 @@ async function handleSend() {
     })
     let started = false // 收到首个token后才把占位消息上屏，避免空泡闪烁
 
-    const { answer } = await sendMessageStream(sessionId, question, 'valorant', {
+    const { answer } = await sendMessageStream(sessionId, question, currentKb.value, {
       onSources: (sources) => { placeholder.sources = sources || [] },
       onToken: (delta) => {
         if (!started) {
@@ -445,6 +487,12 @@ async function handleRollback() {
    const updateSidebar = () => { sidebarOpen.value = window.innerWidth > 768 }
    window.addEventListener('resize', updateSidebar)
    testChat().then(r => { backendOnline.value = r.data.code === 200 }).catch(() => { backendOnline.value = false })
+   // 拉取可用领域列表：一键切换知识库（v3.6）
+   getDomains().then((r) => {
+     const data = r.data.data || {}
+     domains.value = data.domains || []
+     if (data.default) currentKb.value = data.default
+   }).catch(() => { /* 领域接口不可用时保持默认域 */ })
  })
 </script>
 
@@ -808,6 +856,63 @@ async function handleRollback() {
   align-items: center;
   gap: 8px;
 }
+
+/* ---- 领域一键切换（v3.6） ---- */
+.domain-switch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--val-bg, rgba(255, 255, 255, 0.06));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.domain-btn {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.domain-btn:hover {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.domain-btn.active {
+  background: linear-gradient(135deg, #ff4655, #bd3944);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(255, 70, 85, 0.35);
+}
+
+/* 侧边栏领域信息卡 */
+.domain-info-card {
+  margin: 14px 12px;
+  padding: 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.domain-info-card .info-title {
+  font-size: 15px;
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+
+.domain-info-card .info-desc {
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: rgba(255, 255, 255, 0.55);
+  margin: 0;
+}
+
 
 .connection-badge {
   display: flex;

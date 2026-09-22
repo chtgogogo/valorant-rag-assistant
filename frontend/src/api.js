@@ -77,6 +77,11 @@ export function testChat() {
   return api.get('/chat/test')
 }
 
+// 可用领域列表（前端一键切换知识库）
+export function getDomains() {
+  return api.get('/domain/list')
+}
+
 // 知识库文档管理
 export function listDocuments(kbId = 'valorant') {
   return api.get('/document/list', {

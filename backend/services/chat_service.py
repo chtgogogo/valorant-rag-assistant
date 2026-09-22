@@ -5,7 +5,8 @@ import time
 from langchain.prompts import ChatPromptTemplate
 from config.settings import (
     LLM_CONFIG, SYSTEM_PROMPT, CHAT_CONFIG, RAG_CONFIG,
-    FALLBACK_ANSWER, REFUSE_ANSWER, CUSTOM_RULES, DEFAULT_KB_ID,
+    FALLBACK_ANSWER, REFUSE_ANSWER, CUSTOM_RULES, DEFAULT_KB_ID, TICKET_CONFIG,
+    get_profile,
 )
 from schemas.models import ChatMessage, SearchResult
 from utils.sensitive import filter_sensitive
@@ -67,20 +68,22 @@ def rollback_history(session_id: str, turn_index: int) -> bool:
     save_history(session_id, new_history)
     return True
 # -------------------------- 检索管线（v3.0：改写→混合召回→重排） --------------------------
-def _retrieve(question: str, history: list[ChatMessage], kb_id: str) -> tuple[str, list[SearchResult]]:
+def _retrieve(question: str, history: list[ChatMessage], kb_id: str, profile: dict = None) -> tuple[str, list[SearchResult]]:
     """
     三级检索管线：
-      1. 查询改写：把"它的伤害多少"这类指代问题改写成独立完整问题
+      1. 查询改写：把"它的伤害是多少"这类指代问题改写成独立完整问题（改写提示词随领域）
       2. 混合召回：BM25 关键词 + 向量语义双路召回，RRF 融合
       3. 重排序：CrossEncoder 精排取 top_k
+    :param profile: 领域配置（None 时用默认领域）——改写提示词等领域内容运行时跟随 kb_id
     :return: (实际用于检索的问题, 精排后的结果列表)
     """
     from services.query_rewriter import rewrite_query
     from services.hybrid_retriever import hybrid_search
     from services.reranker import rerank
 
+    profile = profile or get_profile(kb_id)
     question = expand_query_aliases(question)
-    rewritten = rewrite_query(question, history)
+    rewritten = rewrite_query(question, history, rewrite_prompt=profile.get("query_rewrite_prompt", ""))
     candidates = hybrid_search(rewritten, kb_id)
     results = rerank(rewritten, candidates)
     return rewritten, results
@@ -225,17 +228,21 @@ def _build_sources(results: list[SearchResult]) -> list[dict]:
     ]
 
 
-def _build_rag_messages(history: list[ChatMessage], results: list[SearchResult], question: str) -> ChatPromptTemplate:
-    """拼 RAG 提示词：系统提示 + 参考资料 + 历史 + 最新问题"""
+def _build_rag_messages(history: list[ChatMessage], results: list[SearchResult], question: str,
+                        profile: dict = None) -> ChatPromptTemplate:
+    """拼 RAG 提示词：系统提示 + 参考资料 + 历史 + 最新问题（系统提示与拒答话术随领域）"""
+    profile = profile or get_profile()
+    sys_prompt = profile.get("system_prompt", SYSTEM_PROMPT)
+    refuse = profile.get("refuse_answer", REFUSE_ANSWER)
     results = _dedupe_results(results)
     context = "\n".join(
         [f"参考资料{i+1}（来源：{r.source}）：{r.content}" for i, r in enumerate(results)]
     )
     messages = [
-        ("system", SYSTEM_PROMPT + f"""
+        ("system", sys_prompt + f"""
 请严格基于参考资料和历史对话回答问题，遵守以下规则：
 1. 参考资料：{context}
-2. 如果问题与无畏契约游戏完全无关（如写代码、做菜、天气、闲聊等日常请求），即使参考资料里出现了相关字样，也必须直接返回：{REFUSE_ANSWER}
+2. 如果问题与本领域完全无关（其他领域闲聊、写代码、做菜、天气等日常请求），即使参考资料里出现了相关字样，也必须直接返回：{refuse}
 3. 参考资料里没有的内容不要编造，直接返回兜底话术
 4. 不要重复介绍同一技能或同一段内容；如果答案已经说清楚，直接结束。
 """),
@@ -261,9 +268,29 @@ def _call_llm_with_retry(prompt, inputs, max_retry=2, model=None):
             time.sleep(3 * (i + 1))  # 递增退避：免费模型偶发限流(429)，等久一点再试
 
 
+def _auto_create_ticket(session_id: str, question: str, rewritten: str,
+                        results: list[SearchResult], kb_id: str) -> str:
+    """v3.5 工单闭环：低置信兜底时自动建人工工单，返回要附在回答里的工单提示（失败返回空串，不阻塞回答）"""
+    if not TICKET_CONFIG["enabled"] or not TICKET_CONFIG["auto_create"]:
+        return ""
+    try:
+        from services import ticket_service
+        if ticket_service.has_recent_duplicate(session_id, question, TICKET_CONFIG["cooldown_minutes"]):
+            return ""
+        top1 = results[0].score if results else 0.0
+        ticket_id = ticket_service.create_ticket(question, rewritten, top1, kb_id, session_id)
+        logger.info("[工单] 低置信兜底自动建单: %s question=%s top1=%.3f", ticket_id, question[:30], top1)
+        return f"\n\n（你的问题已记录为人工工单 **{ticket_id}**，客服补充答案后同类问题我就能直接回答）"
+    except Exception as e:
+        logger.warning("工单自动创建失败(不影响回答): %s", e)
+        return ""
+
+
 def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple[str, list[dict], list[ChatMessage]]:
-    """单轮问答主流程（v3.0 管线），返回 (答案, 来源, 最新历史)"""
+    """单轮问答主流程（v3.0 管线），返回 (答案, 来源, 最新历史)。
+    v3.6：kb_id 即领域键——领域配置（提示词/兜底话术/关键词规则/改写提示词）运行时跟随 kb_id"""
     kb_id = kb_id or DEFAULT_KB_ID
+    P = get_profile(kb_id)
     start_time = time.time()
 
     # 1. 敏感词校验
@@ -273,8 +300,8 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple
         log_qa(session_id, question, question, [], answer, (time.time() - start_time) * 1000, kb_id, "sensitive_block")
         return answer, [], load_history(session_id)
 
-    # 2. 自定义关键词规则优先
-    for keyword, reply in CUSTOM_RULES.items():
+    # 2. 自定义关键词规则优先（随领域）
+    for keyword, reply in (P.get("custom_rules") or {}).items():
         if keyword in question:
             history = load_history(session_id)
             history.append(ChatMessage(role="user", content=question))
@@ -282,14 +309,15 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple
             save_history(session_id, history)
             return reply, [], history
 
-    # 官方结构化数据优先：列表/定位/价格类问题走确定性回答，避免 LLM 胡编
-    official_answer = answer_official_data_query(question)
-    if official_answer:
-        history = load_history(session_id)
-        history.append(ChatMessage(role="user", content=question))
-        history.append(ChatMessage(role="assistant", content=official_answer))
-        save_history(session_id, history)
-        return official_answer, [], history
+    # 官方结构化数据优先（游戏领域专属：英雄/武器/地图数据文件）；其他领域跳过
+    if kb_id == "valorant":
+        official_answer = answer_official_data_query(question)
+        if official_answer:
+            history = load_history(session_id)
+            history.append(ChatMessage(role="user", content=question))
+            history.append(ChatMessage(role="assistant", content=official_answer))
+            save_history(session_id, history)
+            return official_answer, [], history
 
     question_for_prompt = replace_aliases_with_official(question)
 
@@ -297,7 +325,7 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple
     history = load_history(session_id)
 
     # 4~6. 三级检索管线：改写 → 混合召回 → 重排（+ v3.3 质量自评 Critic）
-    rewritten, results = _retrieve(question_for_prompt, history, kb_id)
+    rewritten, results = _retrieve(question_for_prompt, history, kb_id, profile=P)
     rewritten, results, critic_log = _critic_refine(question_for_prompt, rewritten, results, kb_id)
     pipeline_desc = ("hybrid+rerank" if RAG_CONFIG.get("enable_rerank") else "hybrid") \
         if RAG_CONFIG.get("enable_hybrid_search") else "vector"
@@ -305,13 +333,13 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple
     if retries:
         pipeline_desc += f"+critic{retries}"
 
-    # 7. 低置信兜底
+    # 7. 低置信兜底（v3.5：自动生成人工工单，闭环入口；兜底话术随领域）
     if _should_fallback(results):
-        answer = FALLBACK_ANSWER
+        answer = P["fallback_answer"] + _auto_create_ticket(session_id, question, rewritten, results, kb_id)
         sources = []
     else:
         # 8. 拼提示词（加拒答规则），带重试调用大模型
-        prompt = _build_rag_messages(history, results, question_for_prompt)
+        prompt = _build_rag_messages(history, results, question_for_prompt, profile=P)
         answer = _call_llm_with_retry(prompt, {"question": question_for_prompt})
         sources = _build_sources(results)
 
@@ -333,6 +361,7 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
       {"type": "done",    "answer": "...", "history": [...]}
     """
     kb_id = kb_id or DEFAULT_KB_ID
+    P = get_profile(kb_id)
     start_time = time.time()
 
     # 敏感词 / 关键词规则 / 兜底：这些场景没有流式生成过程，一次性给出
@@ -343,7 +372,7 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
         yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in load_history(session_id)]}
         return
 
-    for keyword, reply in CUSTOM_RULES.items():
+    for keyword, reply in (P.get("custom_rules") or {}).items():
         if keyword in question:
             history = load_history(session_id)
             history.append(ChatMessage(role="user", content=question))
@@ -353,19 +382,20 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
             yield {"type": "done", "answer": reply, "history": [m.model_dump() for m in history]}
             return
 
-    official_answer = answer_official_data_query(question)
-    if official_answer:
-        history = load_history(session_id)
-        history.append(ChatMessage(role="user", content=question))
-        history.append(ChatMessage(role="assistant", content=official_answer))
-        save_history(session_id, history)
-        yield {"type": "token", "delta": official_answer}
-        yield {"type": "done", "answer": official_answer, "history": [m.model_dump() for m in history]}
-        return
+    if kb_id == "valorant":
+        official_answer = answer_official_data_query(question)
+        if official_answer:
+            history = load_history(session_id)
+            history.append(ChatMessage(role="user", content=question))
+            history.append(ChatMessage(role="assistant", content=official_answer))
+            save_history(session_id, history)
+            yield {"type": "token", "delta": official_answer}
+            yield {"type": "done", "answer": official_answer, "history": [m.model_dump() for m in history]}
+            return
 
     question_for_prompt = replace_aliases_with_official(question)
     history = load_history(session_id)
-    rewritten, results = _retrieve(question_for_prompt, history, kb_id)
+    rewritten, results = _retrieve(question_for_prompt, history, kb_id, profile=P)
     rewritten, results, _critic_log = _critic_refine(question_for_prompt, rewritten, results, kb_id)
     pipeline_desc = ("hybrid+rerank" if RAG_CONFIG.get("enable_rerank") else "hybrid") \
         if RAG_CONFIG.get("enable_hybrid_search") else "vector"
@@ -373,13 +403,13 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
     if _should_fallback(results):
         sources = []
         yield {"type": "sources", "sources": sources}
-        answer = FALLBACK_ANSWER
+        answer = P["fallback_answer"] + _auto_create_ticket(session_id, question, rewritten, results, kb_id)
         for ch in answer:
             yield {"type": "token", "delta": ch}
     else:
         sources = _build_sources(results)
         yield {"type": "sources", "sources": sources}
-        prompt = _build_rag_messages(history, results, question_for_prompt)
+        prompt = _build_rag_messages(history, results, question_for_prompt, profile=P)
         chain = prompt | llm
         parts = []
         try:

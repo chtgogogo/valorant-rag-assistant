@@ -39,17 +39,22 @@ def _needs_rewrite(question: str) -> bool:
     return len(question) <= 8 or any(h in question for h in _ANAPHORA_HINTS)
 
 
-def rewrite_query(question: str, history: list[ChatMessage]) -> str:
+def rewrite_query(question: str, history: list[ChatMessage], rewrite_prompt: str = None) -> str:
     """
     把多轮对话中的问题改写成独立完整的问题
     :param question: 用户最新问题
     :param history: 对话历史（取最近 3 轮做上下文）
+    :param rewrite_prompt: 领域专属改写提示词（v3.6 随 kb_id 切换）；None 用默认领域
     :return: 改写后的问题；失败一律返回原问题
     """
     # 开关关闭 / 没有历史（首轮无指代可言）→ 原样返回
     if not RAG_CONFIG.get("enable_query_rewrite", True):
         return question
     if not history or not _needs_rewrite(question):
+        return question
+
+    prompt_text = rewrite_prompt or QUERY_REWRITE_PROMPT
+    if not prompt_text:
         return question
 
     # 取最近 3 轮历史拼成上下文（3 轮足够定位指代，多了浪费 token）
@@ -60,7 +65,7 @@ def rewrite_query(question: str, history: list[ChatMessage]) -> str:
     )
 
     prompt = ChatPromptTemplate.from_messages([
-        ("system", QUERY_REWRITE_PROMPT),
+        ("system", prompt_text),
         ("human", "历史对话：\n{history}\n\n用户最新问题：{question}"),
     ])
     try:
