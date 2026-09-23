@@ -5,6 +5,25 @@
 
 ---
 
+## v3.11（2026-09-23）· LLM 调用节流提速（调用次数减半 + 快速失败）
+
+**做了什么**
+- **Critic 轮次默认 3→1**（`backend/config/settings.py`）：配置项改名为 `CRITIC_MAX_ROUNDS`（原 `CRITIC_MAX_ITER`），默认 1（1=速度优先 3=质量优先，答辩对比时可调回 3）；`chat_service._critic_refine` 内部 fallback 同步为 1。拒答/兜底判定不受影响——无关问题拒答在生成环节提示词规则里、低置信兜底 `_should_fallback` 在 Critic 循环之外，轮次只控制"灰区换写法重检索"的次数上限。
+- **上层重试 3 次→2 次尝试**（`backend/services/chat_service.py`）：`_call_llm_with_retry` 默认 `max_retry` 2→1（失败等固定 1.5s 重试一次，再失败立即结束；原递增退避 3s/6s）。流式正常路径零改动——生成仍走 `chain.stream`，失败由既有 v3.10 error 事件通道收尾。
+- **openai 客户端自动重试 2→1**（`backend/services/llm_factory.py` + settings）：`make_llm` 给 `ChatOpenAI` 显式传 `max_retries`（新配置 `LLM_MAX_RETRIES`，默认 1）——SDK 自动重试与上层重试叠加曾把限流最坏耗时拖到 2 分钟级。两层收紧后 LLM 环节最坏尝试次数从 3×3=9 降到 2×2=4。
+- `.env.example` 同步新配置名与注释。
+
+**解决了什么**
+- 不限流时同题 20.2s 基线尚可，但限流时两层重试叠加（SDK 2 次 × chat_service 3 次）× Critic 最多 3 轮重检索，最坏要等 2 分钟才见反馈；现在失败反馈缩到秒级（实测连接失败 2.3s 出 error 事件），不限流正常问答无回退。
+
+**验证**
+- 正常回归（8002 独立实例、纯默认配置）：同题「排位上分有什么技巧？」流式 `sources → done`，总耗时 30.1s、918 个 token 事件、答案 1510 字（生成约 22s + 检索/Critic 约 8s，与 20s 基线同量级；答案更长所以略高）。另一次成功样本 83.7s 中生成段实测约 20s，多出约 60s 为智谱 429 响应 Retry-After 头的 SDK 等待（限流窗口条件，非基线）。
+- Critic 生效：三种场景（judge 成功/429 失败降级/连接失败降级）日志均只出现 `[Critic] 第1轮评估` 一行，无第 2/3 轮；轮次=1 时拒答兜底不受影响已从代码路径确认。
+- 快速失败：.env 临时注入 `ZHIPU_BASE_URL=http://127.0.0.1:9`（复原后 md5 与原文件一致：f8840b06e46ec122fd3055adce05b88d），提问到 `event: error`（code=unavailable）总耗时 **2.3s**（要求 ≤30s），事件序列 sources→error 干净结束、无残缺答案；日志确认 judge 只尝试 2 次（第1次失败→1.5s→第2次失败，无第3次）。
+- `py_compile` 通过（settings/chat_service/llm_factory）；验完 8002 实例进程已结束、端口无残留，测试会话历史已删除，8001 现役实例未受影响。
+
+---
+
 ## v3.10（2026-09-23）· LLM 限流/故障前端友好降级（消灭无限转圈）
 
 **做了什么**

@@ -178,7 +178,7 @@ def _critic_refine(question: str, rewritten: str, results: list[SearchResult],
 
     high = RAG_CONFIG.get("critic_score_high", 0.75)
     best_q, best_r = rewritten, results
-    max_iter = RAG_CONFIG.get("critic_max_iterations", 3)
+    max_iter = RAG_CONFIG.get("critic_max_iterations", 1)  # 【v3.11】默认 1 轮（速度优先），CRITIC_MAX_ROUNDS 可调回 3
 
     from services.hybrid_retriever import hybrid_search
     from services.reranker import rerank as _rerank
@@ -268,8 +268,11 @@ def _llm_error_event(e: Exception) -> dict:
     return {"type": "error", "code": "unavailable", "message": "模型服务暂时不可用，请稍后再试~"}
 
 
-def _call_llm_with_retry(prompt, inputs, max_retry=2, model=None):
+def _call_llm_with_retry(prompt, inputs, max_retry=1, model=None):
     """大模型调用带重试：失败自动重试，最终失败返回友好提示（真实错误已写入日志）
+    【v3.11】重试从 2 次收紧为 1 次、退避固定 1.5s——SDK 自动重试与上层重试叠加
+    曾把限流最坏耗时拖到 2 分钟级；现在最多 1.5s 后快速失败（流式路径由调用方
+    的 except 走 error 事件结束，非流式路径返回友好文案）。
     :param model: 指定环节实例（llm_rewrite/llm_critic），默认用最终答案生成实例"""
     for i in range(max_retry + 1):
         try:
@@ -280,7 +283,7 @@ def _call_llm_with_retry(prompt, inputs, max_retry=2, model=None):
             logger.error("大模型调用失败(第%d次) 输入=%s 错误=%s", i + 1, inputs, e)
             if i == max_retry:
                 return "抱歉，当前服务有点忙，请稍后再试~"
-            time.sleep(3 * (i + 1))  # 递增退避：免费模型偶发限流(429)，等久一点再试
+            time.sleep(1.5)  # 【v3.11】固定短退避重试一次，再失败立即快速结束（原递增退避 3s/6s）
 
 
 def _auto_create_ticket(session_id: str, question: str, rewritten: str,

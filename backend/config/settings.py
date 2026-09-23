@@ -56,6 +56,7 @@ LLM_CONFIG = {
     "max_tokens": int(os.getenv("LLM_MAX_TOKENS", "1024")),
     "timeout": int(os.getenv("LLM_TIMEOUT", "30")),               # 普通调用超时
     "thinking_timeout": int(os.getenv("LLM_THINKING_TIMEOUT", "60")),  # 开思考的调用放宽（思考本身 10~30s）
+    "max_retries": int(os.getenv("LLM_MAX_RETRIES", "1")),        # 【v3.11】openai 客户端自动重试次数（原默认 2）：与上层重试叠加曾把限流最坏耗时拖到 2 分钟级，收紧为 1 快速失败
 }
 
 # 检查一下有没有读到密钥（如果没读到，程序直接报错提醒你）
@@ -100,9 +101,11 @@ RAG_CONFIG = {
     # 注意 USE_VECTOR_RETRIEVAL=0 时 RAG_HYBRID 无意义（混合的前提是向量这一路存在）
     "enable_vector_search": os.getenv("USE_VECTOR_RETRIEVAL", "1") == "1",
     # 质量自评 Critic（v3.3）：重排分数落在 [阈值, CRITIC_SCORE_HIGH) 灰区时触发，
-    # 判断资料是否足以回答；不足则换写法重检索，最多 CRITIC_MAX_ITER 轮，全程写日志
+    # 判断资料是否足以回答；不足则换写法重检索，全程写日志。
+    # 【v3.11】轮次默认 1（1=速度优先 3=质量优先）：灰区问题最多 1 次评估+1 次重检索；
+    # 拒答/兜底判定在生成环节（ critic 之外），不受轮次影响
     "critic_enabled": os.getenv("RAG_CRITIC", "1") == "1",
-    "critic_max_iterations": int(os.getenv("CRITIC_MAX_ITER", "3")),
+    "critic_max_iterations": int(os.getenv("CRITIC_MAX_ROUNDS", "1")),
     "critic_score_high": float(os.getenv("CRITIC_SCORE_HIGH", "0.75")),  # ≥此值跳过自评（高分快速通道）
     "top_k": 5,                      # 最终喂给大模型的资料条数
     "score_threshold": 0.35,         # 旧兜底阈值（纯向量模式用）

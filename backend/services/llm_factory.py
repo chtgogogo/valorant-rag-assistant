@@ -27,6 +27,7 @@ def make_llm(thinking: bool, timeout: int,
         temperature=LLM_CONFIG["temperature"] if temperature is None else temperature,
         max_tokens=LLM_CONFIG["max_tokens"] if max_tokens is None else max_tokens,
         timeout=timeout,
+        max_retries=LLM_CONFIG.get("max_retries", 1),  # 【v3.11】SDK 层自动重试默认收紧为 1（原 2），与上层重试叠加会拖慢失败反馈
     )
     thinking_type = "enabled" if thinking else "disabled"
     _original_create = inst.client.create
