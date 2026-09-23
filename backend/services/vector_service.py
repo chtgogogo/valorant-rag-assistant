@@ -1,4 +1,4 @@
-# 【分工3写】向量入库/检索逻辑
+# 向量入库/检索逻辑
 import logging
 import os
 # 设置 HuggingFace 镜像，解决国内 SSL/网络问题（必须在 import sentence_transformers 之前设置）

@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  compile-and-eval:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Syntax check (py_compile 全后端)
+        run: |
+          python -m compileall backend -q
+
+      - name: 检索评测（L1 层，skip-llm，CPU）
+        working-directory: backend
+        env:
+          ZHIPU_API_KEY: ""        # 评测 --skip-llm 不需要真实 key
+        run: |
+          python scripts/evaluate_rag.py --mode hybrid --skip-llm
+
+      - name: 拒答与召回守护（对照基线 70.6%）
+        run: |
+          python - <<'PY'
+          import glob, re, sys
+          reports = sorted(glob.glob("backend/eval/reports/report_hybrid_*.md"))
+          assert reports, "未找到评测报告"
+          text = open(reports[-1], encoding="utf-8").read()
+          m = re.search(r"Hit@5:\s*(\d+)/(\d+)", text)
+          hit, total = int(m.group(1)), int(m.group(2))
+          ratio = hit / total
+          print(f"Hit@5 = {hit}/{total} = {ratio:.1%}")
+          # 基线 70.6%（2026-09-18 实测，口径见 docs 对外数字口径表）；
+          # 知识库变更会移动该数字：跌破基线 5 个百分点即拦截合并。
+          assert ratio >= 0.656, f"Hit@5 {ratio:.1%} 低于守护线 65.6%（基线 70.6% - 5pp）"
+          PY

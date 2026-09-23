@@ -1,4 +1,4 @@
-# 【分工3写】向量检索接口
+# 向量检索接口
 from fastapi import APIRouter
 from typing import List
 from schemas.models import ApiResponse, DocumentChunk

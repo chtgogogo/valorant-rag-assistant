@@ -1,4 +1,4 @@
-# 【分工2写】文档解析/切分逻辑
+# 文档解析/切分逻辑
 import os
 import json
 import time
@@ -156,7 +156,7 @@ def upload_and_process(file_path: str, filename: str, kb_id: str = "valorant") -
             }
         ))
 
-    # 5. 调用分工3入库
+    # 5. 调用向量服务入库
     success = add_chunks(chunks, kb_id)
     if not success:
         raise ValueError("向量入库失败，请检查向量引擎是否正常")
@@ -204,8 +204,14 @@ def delete_document(doc_id: str, kb_id: str = "valorant") -> bool:
     if target:
         _save_doc_list(kb_id, new_list)
         # 3. 删除原始上传文件
-        file_path = os.path.join(UPLOAD_PATH, target["doc_name"])
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        # doc_name 来自注册表（源头是历史客户端文件名），删除前必须校验仍在上传目录内，
+        # 防历史脏数据（如 ../../x.md）借删除接口删掉任意文件
+        base = os.path.realpath(UPLOAD_PATH)
+        resolved = os.path.realpath(os.path.join(UPLOAD_PATH, target["doc_name"]))
+        if resolved == base or resolved.startswith(base + os.sep):
+            if os.path.exists(resolved):
+                os.remove(resolved)
+        else:
+            print(f"[文档管理] 拒绝删除上传目录外的路径: {target['doc_name']}")
         print(f"[文档管理] 文档 [{target['doc_name']}] 已删除")
     return True
