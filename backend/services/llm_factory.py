@@ -8,7 +8,7 @@
 # 思考开关与超时分层配置（见 settings.LLM_CONFIG）。
 # ------------------------------------------------------------
 from langchain_openai import ChatOpenAI
-from config.settings import LLM_CONFIG
+from config.settings import LLM_CONFIG, require_api_key
 
 import logging
 logger = logging.getLogger(__name__)
@@ -20,6 +20,7 @@ def make_llm(thinking: bool, timeout: int,
     :param thinking: True=开启混合思考（答案前先推理，慢但精度高）；False=显式关闭（快）
     :param timeout: 该实例的调用超时秒数（开思考的调用建议用 thinking_timeout）
     """
+    require_api_key()  # 【v3.15】创建实例前统一校验密钥（中文指引），替代原 import 时强校验
     inst = ChatOpenAI(
         api_key=LLM_CONFIG["api_key"],
         base_url=LLM_CONFIG["base_url"],

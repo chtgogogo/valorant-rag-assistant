@@ -47,6 +47,14 @@ def recent_audit(days: int = 7):
 
 if __name__ == "__main__":
     import uvicorn
+    # 【v3.15】启动前密钥体检：校验已从 import 链移除（评测/CI 的 skip-llm 路径不再
+    # 被连坐），服务启动时在这里统一把关——缺失依旧启动即报错退出，并给中文指引
+    from config.settings import require_api_key
+    try:
+        require_api_key()
+    except ValueError as e:
+        print(f"\n{e}\n")
+        raise SystemExit(1)
     # 默认关闭热重载：reload=True 时 uvicorn 会额外起一个"监视文件"的父进程，
     # 而 main.py 顶层 import 会把 torch/sentence_transformers 一起带进来，
     # 等于白白多占约 1.6GB 内存，而且一改文件就把子进程连同模型重载一遍。

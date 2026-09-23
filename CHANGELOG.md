@@ -5,6 +5,40 @@
 
 ---
 
+## v3.15（2026-09-24）· CI 修复转绿：密钥校验延迟化 + 建库/CPU torch 进流水线
+
+**做了什么**
+1. **密钥校验从 import 链移除（CI 红的根因）**：`config/settings.py` 删除模块级
+   `raise`，新增 `require_api_key()` 统一把关——服务启动入口（`main.py`，缺失依旧
+   启动即报错退出并给中文指引）与 `llm_factory.make_llm`（创建实例前校验）两处调用。
+2. **LLM 实例全部懒加载**：`chat_service` 三个模块级实例（生成/改写/Critic）改为
+   `get_llm() / get_llm_rewrite() / get_llm_critic()` 缓存式懒加载；`query_rewriter`
+   的专用改写实例（低温度/少 token/独立超时）同样懒加载——import 本项目任何模块
+   都不再建实例、不再要求密钥。
+3. **CI 流水线补全**（`.github/workflows/ci.yml`）：安装步骤先装 CPU 版 torch
+   （云端无显卡，CUDA 版会白拖 NVIDIA 全家桶）；评测前新增 `init_knowledge_base.py`
+   建库步骤（CI 环境没有 `backend/data/` 向量库）；`HF_ENDPOINT` 覆盖为官方源
+   （境外机器直连更快）。
+
+**解决了什么问题**
+- 上一版（104e096）新增的 CI 从未跑绿过：`ZHIPU_API_KEY` 模块级强校验让
+  --skip-llm 评测在无 key 环境直接崩（GitHub Actions run 35911673324 = failure）；
+  即使过了这关，CI 环境没有向量库，评测仍无数据可查。"Hit@5 守护线 65.6%"
+  自宣称起实际从未生效——本次修复后守护线首次真正上岗。
+- 附带收益：服务启动不再等模型加载（懒加载后 8002 实例 5 秒即就绪）。
+
+**怎么验证的**
+- 红（改前）：`ZHIPU_API_KEY= python scripts/evaluate_rag.py --mode hybrid --skip-llm`
+  → exit 1，`settings.py:64` ValueError，与 CI 失败日志同因同源。
+- 绿（改后）：同命令 → exit 0，Hit@5 12/17 = 70.6% / MRR 0.598 / 拒答 3/3，
+  与基线逐字一致零回归（报告 report_hybrid_20260924_063416.md）。
+- 服务冒烟（8002 验证实例，不动现役 8001）：/health 200；关键词规则问答正常
+  （不调 LLM）；真实检索问答全管线正常（改写→混合检索→重排→生成带来源）；
+  验完进程结束、端口无残留、测试会话历史已删除。
+- CI 本体：本提交触发的 GitHub Actions run 全步转绿（含守护线断言）即为最终验证。
+
+---
+
 ## v3.14（2026-09-23）· 文档上传路径穿越修复 + 安检报告勘误（安检 L1 复核）
 
 **做了什么**
@@ -163,9 +197,6 @@
 ## v3.6（2026-09-22）· 前端一键切换领域（多领域运行时支持）
 
 **做了什么**
-- **后端多领域运行时**：
-
-**做了什么**
 - **后端多领域运行时**：`settings.py` 启动时加载 `domain_profiles/` 下**全部**领域到 `DOMAIN_PROFILES`，新增 `get_profile(kb_id)` 运行时取配置——领域键 = 知识库 ID（valorant / ecommerce 同名），不再绑定 `APP_DOMAIN` 启动环境变量（该变量仍作为默认领域，向后兼容）。
 - **chat 链路配置全部随域**：系统提示词、拒答话术、兜底话术、关键词规则、查询改写提示词改为按请求 kb_id 实时取用（`chat_single_turn` / `chat_single_turn_stream` / `_retrieve` / `_build_rag_messages` / `rewrite_query` 传递 profile）；游戏官方数据直答（英雄/武器/地图别名）仅对 valorant 域生效。
 - **领域列表接口** `GET /api/domain/list`（`domain_router.py`）：返回领域键、展示名、短名、默认域、欢迎屏快捷问题（yaml 新增 `quick_questions` 字段，两域 yaml 已配 short_name）。
@@ -204,7 +235,7 @@
 ## v3.4（2026-09-20）· 三层评测体系 + 自审思考关
 
 **做了什么**
-- 评测升级为三层：L1 主回归集（20+8 冻结）、L2 扩充集（21 题：黑话别名 8 + 多轮指代 5 + 拒答陷阱 3 + 边界观察 2，关键词全部在知识库逐条核对）、L3 Critic 评审员标注集（10 题人工标注，专测评审判分质量）。
+- 评测升级为三层：L1 主回归集（20+8 冻结）、L2 扩充集（18 题：黑话别名 8 + 多轮指代 5 + 拒答陷阱 3 + 边界观察 2，关键词全部在知识库逐条核对；2026-09-24 勘误：原文误写"21 题"，与分解式及 eval_set_l2.json 实际条数不符）、L3 Critic 评审员标注集（10 题人工标注，专测评审判分质量）。
 - 评测机制：温度固定 0（消除生成指标采样漂移）、多轮 history 字段支持（查询改写首次进入评测）、官方数据直答路径（path=official）、观察题（observe，记录行为不计分）、报告分类型统计 + P50/P95 延迟 + 设备口径。
 - 官方数据评测题自动生成器 `gen_official_eval.py`（从 heroes/weapons/maps.json 产出，题与数据永同步）。
 - Critic 评审员 A/B 脚本 `eval_critic_judge.py`。

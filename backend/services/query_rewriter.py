@@ -21,12 +21,20 @@ from services.llm_factory import make_llm
 
 # 思考文本会占用 token 预算：开思考时上限放大到 1024，否则思考没写完就截断、content 为空
 _thinking_on = LLM_CONFIG.get("thinking_rewrite", False)
-_rewriter_llm = make_llm(
-    thinking=_thinking_on,
-    timeout=LLM_CONFIG["thinking_timeout"] if _thinking_on else 8,
-    temperature=0.1,
-    max_tokens=1024 if _thinking_on else 128,
-)
+_rewriter_llm = None  # 【v3.15】懒加载：import 本模块不再建实例、不再要求密钥（评测/CI 可无 key 运行）
+
+
+def _get_rewriter_llm():
+    """首次调用时才创建改写实例（参数与主链路实例不同：低温度、少 token、独立超时）"""
+    global _rewriter_llm
+    if _rewriter_llm is None:
+        _rewriter_llm = make_llm(
+            thinking=_thinking_on,
+            timeout=LLM_CONFIG["thinking_timeout"] if _thinking_on else 8,
+            temperature=0.1,
+            max_tokens=1024 if _thinking_on else 128,
+        )
+    return _rewriter_llm
 
 # 常见指代/省略特征：命中才调大模型改写，首轮或完整问题直接跳过，省时省 token
 _ANAPHORA_HINTS = ("它", "他", "她", "这个", "那个", "这把", "那把", "这种", "那种",
@@ -69,7 +77,7 @@ def rewrite_query(question: str, history: list[ChatMessage], rewrite_prompt: str
         ("human", "历史对话：\n{history}\n\n用户最新问题：{question}"),
     ])
     try:
-        chain = prompt | _rewriter_llm
+        chain = prompt | _get_rewriter_llm()
         response = None
         for attempt in range(2):  # 免费档偶发 429：一次退避重试，仍失败才降级
             try:

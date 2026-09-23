@@ -18,19 +18,28 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install dependencies（CI 用 CPU 版 torch：云端无显卡，CUDA 版会白拖 NVIDIA 全家桶）
         run: |
           python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r backend/requirements.txt
 
       - name: Syntax check (py_compile 全后端)
         run: |
           python -m compileall backend -q
 
+      - name: 重建知识库向量索引（CI 环境无数据目录，评测前先建库；模型从 HF 官方源下载）
+        working-directory: backend
+        env:
+          HF_ENDPOINT: https://huggingface.co   # 覆盖代码里的国内镜像 setdefault（境外机器直连更快）
+        run: |
+          python scripts/init_knowledge_base.py
+
       - name: 检索评测（L1 层，skip-llm，CPU）
         working-directory: backend
         env:
-          ZHIPU_API_KEY: ""        # 评测 --skip-llm 不需要真实 key
+          ZHIPU_API_KEY: ""        # 评测 --skip-llm 不需要真实 key（v3.15 起 import 不再强校验）
+          HF_ENDPOINT: https://huggingface.co
         run: |
           python scripts/evaluate_rag.py --mode hybrid --skip-llm
 

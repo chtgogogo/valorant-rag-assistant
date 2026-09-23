@@ -59,9 +59,16 @@ LLM_CONFIG = {
     "max_retries": int(os.getenv("LLM_MAX_RETRIES", "1")),        # 【v3.11】openai 客户端自动重试次数（原默认 2）：与上层重试叠加曾把限流最坏耗时拖到 2 分钟级，收紧为 1 快速失败
 }
 
-# 检查一下有没有读到密钥（如果没读到，程序直接报错提醒你）
-if not LLM_CONFIG["api_key"]:
-    raise ValueError("❌ 没有找到 ZHIPU_API_KEY！请在项目根目录创建 .env 文件并写入你的密钥。")
+# 【v3.15】密钥校验延迟化：import 本模块不再强制要求密钥——评测/CI 的 --skip-llm
+# 路径全程不调大模型，不该被连坐（CI 红过的根因）；真正用大模型前由
+# require_api_key() 统一把关（服务启动入口 main.py 与 llm_factory.make_llm 调用），
+# 缺失时仍给出同样的中文指引。
+def require_api_key() -> str:
+    """返回智谱 API 密钥；缺失时抛出带配置指引的中文错误"""
+    key = LLM_CONFIG["api_key"]
+    if not key:
+        raise ValueError("❌ 没有找到 ZHIPU_API_KEY！请在项目根目录创建 .env 文件并写入你的密钥。")
+    return key
 
 # ------------------------------------------------------
 # 2. Embedding 模型配置（本地跑的，不需要密钥）

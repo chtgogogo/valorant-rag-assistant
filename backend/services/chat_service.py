@@ -21,11 +21,33 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 全局大模型实例（v3.3：按环节拆分，各自独立思考开关与超时，见 llm_factory）
-llm = make_llm(LLM_CONFIG.get("thinking", False), LLM_CONFIG["timeout"])                # 最终答案生成：默认关思考
-llm_rewrite = make_llm(LLM_CONFIG.get("thinking_rewrite", False),
-                       LLM_CONFIG["thinking_timeout"] if LLM_CONFIG.get("thinking_rewrite") else LLM_CONFIG["timeout"])  # 查询改写
-llm_critic = make_llm(LLM_CONFIG.get("thinking_critic", True), LLM_CONFIG["thinking_timeout"])  # 质量自评：默认开思考
+# 大模型实例（v3.3：按环节拆分，各自独立思考开关与超时，见 llm_factory）
+# 【v3.15】改为懒加载：import 本模块不再创建实例、不再要求密钥（评测/CI 的
+# import 路径因此可无 key 运行）；首次真正调用时才创建，之后复用缓存
+_llm_instances: dict = {}
+
+
+def get_llm():
+    """最终答案生成实例：默认关思考（保速度）"""
+    if "llm" not in _llm_instances:
+        _llm_instances["llm"] = make_llm(LLM_CONFIG.get("thinking", False), LLM_CONFIG["timeout"])
+    return _llm_instances["llm"]
+
+
+def get_llm_rewrite():
+    """查询改写实例：默认开思考（精度优先，多轮指代消解受益）"""
+    if "rewrite" not in _llm_instances:
+        _llm_instances["rewrite"] = make_llm(
+            LLM_CONFIG.get("thinking_rewrite", False),
+            LLM_CONFIG["thinking_timeout"] if LLM_CONFIG.get("thinking_rewrite") else LLM_CONFIG["timeout"])
+    return _llm_instances["rewrite"]
+
+
+def get_llm_critic():
+    """质量自评实例：默认关思考（Layer3 标注集 A/B 实测思考零增益）"""
+    if "critic" not in _llm_instances:
+        _llm_instances["critic"] = make_llm(LLM_CONFIG.get("thinking_critic", True), LLM_CONFIG["thinking_timeout"])
+    return _llm_instances["critic"]
 
 # -------------------------- 记忆相关工具函数 --------------------------
 def _get_history_path(session_id: str) -> str:
@@ -132,7 +154,7 @@ def _critic_judge(question: str, results: list[SearchResult]) -> dict:
     try:
         raw = _call_llm_with_retry(_CRITIC_PROMPT,
                                    {"question": question, "context": context},
-                                   model=llm_critic)
+                                   model=get_llm_critic())
         m = re.search(r"\{.*\}", raw or "", re.DOTALL)
         return json.loads(m.group(0)) if m else {"sufficient": True}
     except Exception as e:
@@ -145,7 +167,7 @@ def _generate_alternative_query(question: str, rewritten: str, missing: str) -> 
     try:
         raw = _call_llm_with_retry(_ALT_QUERY_PROMPT,
                                    {"question": question, "rewritten": rewritten, "missing": missing},
-                                   model=llm_rewrite)
+                                   model=get_llm_rewrite())
         alt = (raw or "").strip().splitlines()[0].strip().strip('"')
         return alt or None
     except Exception as e:
@@ -265,10 +287,10 @@ def _call_llm_with_retry(prompt, inputs, max_retry=1, model=None):
     【v3.11】重试从 2 次收紧为 1 次、退避固定 1.5s——SDK 自动重试与上层重试叠加
     曾把限流最坏耗时拖到 2 分钟级；现在最多 1.5s 后快速失败（流式路径由调用方
     的 except 走 error 事件结束，非流式路径返回友好文案）。
-    :param model: 指定环节实例（llm_rewrite/llm_critic），默认用最终答案生成实例"""
+    :param model: 指定环节实例（get_llm_rewrite()/get_llm_critic()），默认用最终答案生成实例"""
     for i in range(max_retry + 1):
         try:
-            chain = prompt | (model or llm)
+            chain = prompt | (model or get_llm())
             response = chain.invoke(inputs)
             return response.content
         except Exception as e:
@@ -421,7 +443,7 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
         sources = _build_sources(results)
         yield {"type": "sources", "sources": sources}
         prompt = _build_rag_messages(history, results, question_for_prompt, profile=P)
-        chain = prompt | llm
+        chain = prompt | get_llm()
         parts = []
         try:
             for chunk in chain.stream({"question": question_for_prompt}):
