@@ -9,7 +9,9 @@ async def test_chat_module():
     return ApiResponse(msg="对话模块加载成功", data={"status": "测试通过"})
 # 核心发送接口
 @chat_router.post("/send", response_model=ApiResponse, summary="发送消息获取回答")
-async def send_message(req: ChatRequest):
+# 【卡10】同步改 def：内部 chat_single_turn 含 LLM 秒级调用+rerank 推理，
+# async def 内直调会阻塞事件循环（期间全站请求排队）；FastAPI 对同步 def 自动走线程池
+def send_message(req: ChatRequest):
     from services.chat_service import chat_single_turn
     answer, sources, history = chat_single_turn(req.session_id, req.question, req.kb_id)
     resp = ChatResponse(answer=answer, sources=sources, history=history)
@@ -55,7 +57,8 @@ async def rollback_chat(session_id: str, turn_index: int):
     return ApiResponse(msg="回滚成功", data={"history": [h.model_dump() for h in new_history]})
 
 @chat_router.get("/warmup", response_model=ApiResponse, summary="预热检索模型")
-async def warmup_retrieval_api(kb_id: str = None):
+# 【卡10】同步改 def：预热要跑完整检索（加载 embedding/BM25/CrossEncoder），秒级重活，不阻塞事件循环
+def warmup_retrieval_api(kb_id: str = None):
     """预热 embedding、BM25、重排模型，避免第一次问答过慢。"""
     from services.chat_service import warmup_retrieval
     data = warmup_retrieval(kb_id)

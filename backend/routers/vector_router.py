@@ -8,7 +8,8 @@ vector_router = APIRouter()
 
 
 @vector_router.post("/add_chunks", response_model=ApiResponse, summary="文档块存入向量库")
-async def add_chunks_api(chunks: List[DocumentChunk], kb_id: str = "valorant"):
+# 【卡10】同步改 def：批量生成 embedding + 写 ChromaDB，重活不阻塞事件循环
+def add_chunks_api(chunks: List[DocumentChunk], kb_id: str = "valorant"):
     """接收切好的文档块，生成向量后存入 ChromaDB"""
     success = add_chunks(chunks, kb_id)
     if success:
@@ -17,7 +18,8 @@ async def add_chunks_api(chunks: List[DocumentChunk], kb_id: str = "valorant"):
 
 
 @vector_router.post("/search", response_model=ApiResponse, summary="检索相关文档")
-async def search_api(question: str, kb_id: str = "valorant", top_k: int = 3):
+# 【卡10】同步改 def：查询向量化（embedding 推理）+ Chroma 检索，重活不阻塞事件循环
+def search_api(question: str, kb_id: str = "valorant", top_k: int = 3):
     """根据问题检索向量库，返回最相似的文档块"""
     results = search_vector(question, kb_id, top_k)
     return ApiResponse(data=[r.model_dump() for r in results])

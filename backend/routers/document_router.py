@@ -1,4 +1,5 @@
 # 【分工2写】知识库/文档接口
+import asyncio
 import os
 from fastapi import APIRouter, UploadFile, File, Query
 from schemas.models import ApiResponse
@@ -33,7 +34,9 @@ async def upload_document(
             f.write(content)
 
         # 解析、切分、入库
-        chunks = upload_and_process(file_path, filename, kb_id)
+        # 【卡10】本路由必须保持 async（上方 await file.read()），重活用 to_thread 丢线程池，
+        # 避免大文档解析+批量 embedding 阻塞事件循环
+        chunks = await asyncio.to_thread(upload_and_process, file_path, filename, kb_id)
 
         return ApiResponse(msg="文档上传成功", data={
             "doc_name": filename,
