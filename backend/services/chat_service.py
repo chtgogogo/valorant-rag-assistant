@@ -253,6 +253,21 @@ def _build_rag_messages(history: list[ChatMessage], results: list[SearchResult],
     return ChatPromptTemplate.from_messages(messages)
 
 
+def _llm_error_event(e: Exception) -> dict:
+    """【v3.10】把大模型异常归类为用户可读的降级提示事件：429 限流 / 5xx / 超时文案区分。
+    供流式生成失败时推送 {"type": "error", ...}，前端据此停止 loading 并渲染错误气泡。"""
+    text = str(e)
+    low = text.lower()
+    if "429" in text or "rate limit" in low or "1302" in text or "1305" in text:
+        # 智谱免费档常见：HTTP 429 / 账户速率限制(1302) / 模型访问量过大(1305)
+        return {"type": "error", "code": "rate_limited", "message": "模型服务繁忙，请稍后再试~"}
+    if "timeout" in low or "timed out" in low:
+        return {"type": "error", "code": "timeout", "message": "模型响应超时，请稍后再试~"}
+    if "500" in text or "502" in text or "503" in text or "server error" in low:
+        return {"type": "error", "code": "server_error", "message": "模型服务开小差了，请稍后再试~"}
+    return {"type": "error", "code": "unavailable", "message": "模型服务暂时不可用，请稍后再试~"}
+
+
 def _call_llm_with_retry(prompt, inputs, max_retry=2, model=None):
     """大模型调用带重试：失败自动重试，最终失败返回友好提示（真实错误已写入日志）
     :param model: 指定环节实例（llm_rewrite/llm_critic），默认用最终答案生成实例"""
@@ -359,6 +374,7 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
       {"type": "sources", "sources": [...]}
       {"type": "token",   "delta": "..."}
       {"type": "done",    "answer": "...", "history": [...]}
+      {"type": "error",   "code": "...", "message": "..."}  # v3.10：生成失败降级提示，推送后流直接结束
     """
     kb_id = kb_id or DEFAULT_KB_ID
     P = get_profile(kb_id)
@@ -420,9 +436,15 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
                     yield {"type": "token", "delta": delta}
             answer = "".join(parts)
         except Exception as e:
+            # v3.10：LLM 生成失败（429/5xx/超时/连接失败）不再把"抱歉"文案伪装成回答，
+            # 改推结构化 error 事件让前端停止 loading 并显示错误气泡，杜绝无限转圈
             logger.error("流式大模型调用失败: %s", e)
-            answer = "抱歉，当前服务有点忙，请稍后再试~"
-            yield {"type": "token", "delta": answer}
+            error_event = _llm_error_event(e)
+            log_qa(session_id, question, rewritten, sources,
+                   f"[生成失败:{error_event['code']}] {error_event['message']}",
+                   (time.time() - start_time) * 1000, kb_id, pipeline_desc + "+llm_error")
+            yield error_event
+            return  # 错误后正常结束流：不发残缺答案，也不把失败文案写进对话历史
 
     history.append(ChatMessage(role="user", content=question))
     history.append(ChatMessage(role="assistant", content=answer))

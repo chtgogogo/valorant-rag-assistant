@@ -36,6 +36,13 @@ async def stream_message(req: ChatRequest):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
+# 历史读取接口（会话刷新恢复）：按 session_id 返回该会话全部消息，只读不改
+@chat_router.get("/history", response_model=ApiResponse, summary="按会话ID读取历史消息")
+async def get_chat_history(session_id: str):
+    from services.chat_service import load_history
+    history = load_history(session_id)
+    return ApiResponse(msg="历史读取成功", data={"history": [h.model_dump() for h in history]})
+
 # 清空对话接口
 @chat_router.post("/clear", response_model=ApiResponse, summary="清空指定会话历史")
 async def clear_chat(session_id: str):

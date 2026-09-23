@@ -137,9 +137,14 @@
             </template>
           </div>
           <div class="msg-body">
-            <div class="msg-bubble" :class="msg.role">
+            <div class="msg-bubble" :class="[msg.role, { error: msg.isError }]">
               <div v-if="msg.role === 'assistant'" class="md-body" v-html="msg.html"></div>
               <div v-else class="user-text">{{ msg.content }}</div>
+            </div>
+            <!-- 用户反馈（v3.8）：assistant 回复下点赞/点踩；已评价置灰防重评（组件内存状态，不持久化）；错误气泡不参与评价 -->
+            <div v-if="msg.role === 'assistant' && msg.content && !loading && !msg.isError" class="msg-feedback">
+              <button class="fb-btn" :disabled="!!msg.fb" :class="{ active: msg.fb === 'up' }" @click="handleFeedback(msg, 'up')" title="有帮助">👍</button>
+              <button class="fb-btn" :disabled="!!msg.fb" :class="{ active: msg.fb === 'down' }" @click="handleFeedback(msg, 'down')" title="没帮助">👎</button>
             </div>
             <div v-if="msg.sources && msg.sources.length > 0" class="msg-footnotes">
               <span class="fn-label">参考</span>
@@ -202,7 +207,7 @@
 import { ref, reactive, nextTick, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Marked } from 'marked'
-import { sendMessage, sendMessageStream, clearHistory, rollbackHistory, testChat, getDomains } from '../api.js'
+import { sendMessage, sendMessageStream, clearHistory, rollbackHistory, getHistory, testChat, getDomains, sendFeedback } from '../api.js'
 
 const emit = defineEmits(['manage'])
 
@@ -235,7 +240,13 @@ async function switchDomain(d) {
 }
 
 let msgCounter = 0
-const sessionId = 'web_' + Date.now()
+// 会话ID持久化：刷新页面复用同一 session_id，对话历史不丢
+const SESSION_KEY = 'valorant_session_id'
+let sessionId = localStorage.getItem(SESSION_KEY)
+if (!sessionId) {
+  sessionId = 'web_' + Date.now()
+  localStorage.setItem(SESSION_KEY, sessionId)
+}
 
  const kbCategories = ref([
    {
@@ -410,6 +421,20 @@ async function handleSend() {
       messages.value.push(placeholder)
     }
   } catch (streamErr) {
+    // v3.10：LLM 生成失败（后端 error 事件）/ SSE 连接中断 → 渲染错误气泡并停止 loading，
+    // 不再降级走普通接口重问（避免二次撞限流继续转圈）
+    if (streamErr && (streamErr.isLlmError || streamErr.isStreamInterrupted)) {
+      const tip = streamErr.llmMessage || '模型服务繁忙，请稍后再试'
+      messages.value.push({
+        id: ++msgCounter,
+        role: 'assistant',
+        content: tip,
+        html: renderMarkdown(tip),
+        sources: [],
+        time: getTime(),
+        isError: true,
+      })
+    } else {
     // 流式失败（后端未升级/网络断开）→ 降级走原来的普通接口
     try {
       const res = await sendMessage(sessionId, question)
@@ -444,6 +469,7 @@ async function handleSend() {
         time: getTime(),
       })
     }
+    }
   } finally {
     loading.value = false
     scrollToBottom()
@@ -457,6 +483,28 @@ async function handleClear() {
     messages.value = []
     ElMessage.success('对话已清空')
   } catch { /* 取消 */ }
+}
+
+// ---- 用户反馈（v3.8）：对 assistant 回复点赞/点踩 ----
+// 问题取该回复前最近一条 user 消息（问题+答案成对落库，供 badcase 回流）
+function findQuestion(msg) {
+  const idx = messages.value.indexOf(msg)
+  for (let i = idx - 1; i >= 0; i--) {
+    if (messages.value[i].role === 'user') return messages.value[i].content
+  }
+  return ''
+}
+
+async function handleFeedback(msg, rating) {
+  if (msg.fb) return // 已评价过，防重评（组件内存状态，不做持久化）
+  msg.fb = rating // 先本地置灰再请求，防连点重复提交
+  try {
+    await sendFeedback(sessionId, findQuestion(msg), msg.content, rating)
+    ElMessage.success('感谢反馈')
+  } catch {
+    msg.fb = null // 提交失败回滚状态，允许重试
+    ElMessage.error('反馈提交失败')
+  }
 }
 
 async function handleRollback() {
@@ -493,6 +541,21 @@ async function handleRollback() {
      domains.value = data.domains || []
      if (data.default) currentKb.value = data.default
    }).catch(() => { /* 领域接口不可用时保持默认域 */ })
+   // 刷新恢复：按持久化的 session_id 拉取历史消息并渲染（结构与 handleRollback 恢复逻辑一致）
+   getHistory(sessionId).then((r) => {
+     const history = r.data?.data?.history || []
+     if (!history.length) return
+     msgCounter = 0
+     messages.value = history.map((msg) => ({
+       id: ++msgCounter,
+       role: msg.role,
+       content: msg.content,
+       html: msg.role === 'assistant' ? renderMarkdown(msg.content) : '',
+       sources: [],
+       time: getTime(),
+     }))
+     scrollToBottom()
+   }).catch(() => { /* 历史接口不可用时静默，保持空列表 */ })
  })
 </script>
 
@@ -1201,7 +1264,43 @@ async function handleRollback() {
   box-shadow: 0 3px 12px rgba(189, 57, 68, 0.2);
 }
 
+/* ---- 错误提示气泡（v3.10：LLM 限流/故障降级提示，暗色主题红调描边） ---- */
+.msg-bubble.error {
+  background: rgba(255, 70, 85, 0.07);
+  border: 1px solid rgba(255, 70, 85, 0.4);
+  color: #ffb3ba;
+}
+
 .user-text { white-space: pre-wrap; }
+
+/* ---- 消息反馈按钮（v3.8 点赞点踩） ---- */
+.msg-feedback { display: flex; gap: 6px; padding: 0 4px; }
+
+.fb-btn {
+  border: 1px solid rgba(90, 110, 127, 0.2);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--val-text-muted);
+  font-size: 12px;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.fb-btn:hover:not(:disabled) {
+  color: var(--val-text);
+  border-color: rgba(255, 70, 85, 0.3);
+  background: rgba(255, 70, 85, 0.08);
+}
+
+.fb-btn.active {
+  color: var(--val-red);
+  border-color: rgba(255, 70, 85, 0.4);
+  background: rgba(255, 70, 85, 0.1);
+}
+
+.fb-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
 /* ============ TYPING INDICATOR ============ */
 .typing-bubble {

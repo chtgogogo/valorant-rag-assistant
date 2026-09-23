@@ -16,9 +16,10 @@ def health_check():
     return {"status": "ok"}
 
 # 跨域配置，必须加，不然前端调不通
+# 白名单收敛：只放行本机前端 dev/preview 端口（vite.config.js 核实为 5174），不再全开放
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5174", "http://127.0.0.1:5174"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -28,12 +29,14 @@ from routers.document_router import doc_router
 from routers.vector_router import vector_router
 from routers.chat_router import chat_router
 from routers.ticket_router import ticket_router
+from routers.feedback_router import feedback_router
 from routers.domain_router import domain_router
 # 企业化预留：AUTH_ENABLED=1 时所有 /api 接口要求 X-API-Key 请求头
 app.include_router(doc_router, prefix="/api/document", tags=["知识库文档"], dependencies=[Depends(verify_api_key)])
 app.include_router(vector_router, prefix="/api/vector", tags=["向量检索"], dependencies=[Depends(verify_api_key)])
 app.include_router(chat_router, prefix="/api/chat", tags=["对话业务"], dependencies=[Depends(verify_api_key)])
 app.include_router(ticket_router, prefix="/api/ticket", tags=["售后工单"], dependencies=[Depends(verify_api_key)])
+app.include_router(feedback_router, prefix="/api/feedback", tags=["用户反馈"], dependencies=[Depends(verify_api_key)])
 app.include_router(domain_router, prefix="/api/domain", tags=["领域切换"], dependencies=[Depends(verify_api_key)])
 
 # 审计日志查询接口（运维排查用）

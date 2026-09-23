@@ -5,7 +5,82 @@
 
 ---
 
+## v3.10（2026-09-23）· LLM 限流/故障前端友好降级（消灭无限转圈）
+
+**做了什么**
+- **后端结构化错误事件**（`backend/services/chat_service.py`）：新增 `_llm_error_event()` 把大模型异常归类为四档用户可读提示——429/账户速率限制(1302)/模型访问量过大(1305)→`rate_limited`「模型服务繁忙，请稍后再试~」、超时→`timeout`「模型响应超时」、5xx→`server_error`「模型服务开小差了」、其余含连接失败→`unavailable`「模型服务暂时不可用」；`chat_single_turn_stream` 流式生成 except 分支不再把"抱歉"文案伪装成回答 token，改为 yield `{"type":"error","code":...,"message":...}` 后直接结束流——不发残缺答案、不把失败文案写进对话历史，审计 `log_qa` 照常留痕（pipeline 标记 `+llm_error`）。SSE 沿用既有 `event: <type>\ndata: <json>` 协议风格，只新增 `error` 一种事件类型。
+- **前端 error 事件处理**（`frontend/src/api.js`）：`sendMessageStream` 新增解析 `error` 事件→取消读取并抛出带 `isLlmError`/`llmMessage` 标记的错误；读循环结束后若从未收到 `done` 事件（SSE 连接中断）同样抛出带 `isStreamInterrupted` 标记的错误——两条路径都不再静默返回空答案。
+- **前端错误气泡**（`frontend/src/components/ChatPage.vue`）：`handleSend` catch 分支优先识别上述两类标记错误→渲染暗色主题错误气泡（红调描边 `.msg-bubble.error`，assistant 形态）并**跳过"降级走普通接口重问"**（避免二次撞限流继续转圈）；错误气泡不参与点赞点踩（`msg.isError` 排除）；原"流式接口不存在→普通接口降级"兼容路径（`resp.ok=false`）保留不动。所有路径汇入 `finally { loading.value = false }`，loading 必停。
+
+**解决了什么**
+- 2026-09-23 09:05 实测：智谱 429（1302/1305）+500 交替时前端无限转圈——生成环节失败后只把"抱歉"文案伪装成普通回答（还会写进历史污染上下文），前端无从感知故障；现在失败即推明确错误事件，前端停止 loading 并显示友好提示，转圈问题根除。
+
+**验证**
+- 模拟故障：.env 临时注入 `ZHIPU_BASE_URL=http://127.0.0.1:9`（验完复原，diff/MD5 确认与原文件完全一致），起后端 curl SSE 问"排位上分有什么技巧？"：先 `event: sources`（top1=0.727，改写首轮跳过、Critic 正常降级放行），再 `event: error` + `{"code":"unavailable","message":"模型服务暂时不可用，请稍后再试~"}`，连接干净结束、无残缺答案；后端日志 `[ERROR] 流式大模型调用失败: Connection error.`，chat_history 无该测试会话文件（零污染）。
+- 真实限流实证：回归期间智谱免费档真实返回 429+1305（"该模型当前访问量过大，请您稍后再试"），error 事件正确归类 `rate_limited`「模型服务繁忙，请稍后再试~」，与连接失败/超时文案成功区分。
+- 正常回归：复原配置后同一问题流式正常（uvicorn 日志 `POST /api/chat/stream HTTP/1.1" 200 OK` + 逐 token 推送 + `done` 事件含完整答案与历史），成功请求日志无任何异常；`npm run dev` 414ms 就绪无报错，ChatPage.vue/api.js 编译产物 HTTP 200 且含新代码标记。
+- `py_compile` 通过；验完 uvicorn/node 进程全部结束，8001/5174 端口无残留，测试会话历史已删除。
+
+---
+
+## v3.9（2026-09-23）· 工单与审计管理页（运营侧告别裸 API）+ 点踩 badcase 回流评测集
+
+**做了什么**
+- **点踩回流脚本**（`backend/scripts/export_feedback_to_eval.py` 新增）：一条命令把 `feedback.db` 中 `rating='down'` 记录追加导出为 `backend/eval/badcase_candidates.jsonl` 评测集候选（含 feedback_id / question / reference_answer「待人工复核」/ source 字段，中文可读），导出前按 feedback_id 扫描去重保证幂等；无点踩/库不存在时提示后正常退出。「用户点踩 → 评测资产候选」回流管线打通，候选经人工复核后才进正式评测集。
+- **运营管理页**（`frontend/src/components/AdminPage.vue` 新增）：三个核心区块 + 一个附加块，风格完全对齐知识库管理页（暗色主题变量、卡片/表格布局、ElMessage/ElMessageBox 交互）：①工单统计卡（待处理/已解决/已关闭/已回流，调 `GET /api/ticket/stats`）；②工单列表（状态筛选 全部/待处理/已解决/已关闭，行内「解决」=弹窗填标准答案+二次确认是否回流知识库，调 `POST /api/ticket/{id}/resolve`；「关闭」确认后调 `POST /api/ticket/{id}/close`）；③最近问答审计表（7 天内时间/问题/检索管线/来源数/耗时，调 `GET /api/audit/recent`）；④附加小块：最近用户反馈列表（赞/踩标签，调 `GET /api/feedback/recent`，只读不喧宾夺主）。页面顶部注明「本地运营演示用，鉴权由后续用户体系承担」。
+- **api.js 新增 6 个函数**：`getTickets / getTicketStats / resolveTicket / closeTicket / getRecentAudit / getRecentFeedback`，全部照文件既有风格封装现有后端接口，**后端零改动**。
+- **入口挂载**（`App.vue`）：管理页以组件切换方式挂载（同知识库管理页先例），入口为对话页右下角悬浮「管理」小按钮（仅对话视图显示），**ChatPage.vue 零改动**。
+
+**解决了什么**
+- 运营侧此前只能拿 curl/数据库工具裸查工单和审计数据，没有可视化处理入口；现在工单解决→回流、关闭的闭环动作和审计排查全部在页面上完成，运营演示链路补齐最后一块。
+
+**验证**
+- 回流脚本五步验证：插 2 条测试点踩→导出 2 条（EXIT=0）→再插 1 条复跑仅导出新增 1 条（幂等✓）→测试数据全清理→空库复跑提示正常退出；库与 JSONL 均复原无残留。
+- 起后端(8001)+前端(5174)：`AdminPage.vue` / `App.vue` 编译产物 curl 均 HTTP 200（70943 / 6775 字节，vite 无编译报错）；四个数据接口经 vite 代理逐个 curl 有真实返回：工单统计 `{total:7, open:2, resolved:5, closed:0, fed_back:5}`、工单列表/筛选正常、审计 7 天内 16 条（最新 09-17，pipeline=hybrid+rerank）、反馈空列表（空态正常）。
+- 动作闭环：sqlite 造 2 条测试工单 → curl resolve（feedback=false）→ 状态 open→resolved、答案落库且未污染向量库（doc_id 空）；curl close → open→closed；测试数据已 DELETE 清理，库恢复原状（7 条：2 open / 5 resolved / 0 closed）。
+- 完成后 uvicorn/node 进程已全部结束，8001/5174 端口无残留。
+
+---
+
+## v3.8（2026-09-23）· 用户反馈闭环最小流程（点赞点踩）
+
+**做了什么**
+- **反馈存储**（`feedback_service.py` 新增）：SQLite 单文件 `data/feedback.db`，表 `feedback(session_id, question, answer, rating up/down, created_at)`；建表逻辑放 service 模块级 init（随 router import 在启动时执行，照 `ticket_service` 先例），线程锁保护写。
+- **反馈接口**（`feedback_router.py` 新增，`main.py` 注册 `/api/feedback`）：`POST /api/feedback`（body `{session_id, question, answer, rating}`，非法 rating 返回 400；**同一 question+answer 重复评价覆盖原记录**——更新 rating 与时间而非插新行）；`GET /api/feedback/recent?limit=50`（只读查询，供后续管理页/badcase 回流取数）。
+- **前端评价按钮**（`ChatPage.vue` + `api.js`）：每条 assistant 消息气泡下新增 👍/👎 小按钮（样式随暗色主题，流式打字中隐藏）；点击后先本地置灰再提交（防连点），提交失败回滚可重试；**已评价后两按钮置灰防重评（组件内存状态，不做持久化）**；问题取该回复前最近一条 user 消息，问题+答案成对落库。
+
+**解决了什么**
+- 此前用户对回答满意与否没有任何表达通道，badcase 只能靠工单兜底被动发现；现在点踩数据落库，为 badcase 回流（知识库越用越厚）提供了第一手数据源。
+
+**验证**
+- `POST /api/feedback` 点踩→同问答改点赞：库里仍 **1 行且 rating=up**（覆盖不重复，action=created→updated）；`GET /api/feedback/recent` 返回该行；经 vite 代理（5174→8001）端到端 POST 亦通；测试数据已 DELETE 清空。
+- 基线回归：L1 评测（hybrid 检索层）改动前后各跑一次，**Hit@5 70.6% / MRR 0.598 / 拒答 100%，两轮完全一致，零回归**（报告 report_hybrid_20260923_083432 / 084139）。
+- `npm run dev` 启动无报错，ChatPage.vue / api.js 编译产物 HTTP 200（含按钮代码段）；所有改动 py_compile 通过。
+
+---
+
+## v3.7（2026-09-23）· 会话刷新不失忆 + CORS 白名单收敛
+
+**做了什么**
+- **历史读取接口** `GET /api/chat/history?session_id=xxx`（`chat_router.py`）：复用 `chat_service.load_history` 只读返回该会话全部消息（`[{role, content}, ...]`），不修改历史。
+- **前端会话 ID 持久化**（`ChatPage.vue`）：组件加载时优先读 `localStorage('valorant_session_id')`，无则生成 `'web_' + Date.now()` 并写入——刷新页面复用同一会话；挂载时调 `getHistory()`（`api.js` 新增）拉取历史并按既有消息结构（`{id, role, content, html, sources, time}`，assistant 走 markdown 渲染）恢复到消息列表，与撤回恢复逻辑一致。
+- **CORS 收敛**（`main.py`）：`allow_origins` 从 `["*"]` 收敛为 `["http://localhost:5174", "http://127.0.0.1:5174"]`（端口按 `vite.config.js` 实际 dev/preview 端口 5174 核实）；`allow_credentials=True` 保留；methods/headers 通配不变。
+
+**解决了什么**
+- 刷新页面后对话历史全丢（session_id 每次加载重新生成，且后端原本没有按会话读历史的接口）；
+- CORS 全开放 + credentials=True 的组合属不安全配置（任何网站可带凭据跨域调用本 API）。
+
+**验证**
+- 后端启动正常；`curl /api/chat/history` 对无历史会话返回空列表、对已存会话能完整读回（存+读闭环演示后测试数据已清理）；
+- CORS 预检：`Origin: http://localhost:5174` 返回 `access-control-allow-origin: http://localhost:5174`；陌生来源被拒（400，无 allow-origin 头）；
+- `npm run dev` 正常启动（5174），ChatPage.vue / api.js 模块编译无报错。
+
+---
+
 ## v3.6（2026-09-22）· 前端一键切换领域（多领域运行时支持）
+
+**做了什么**
+- **后端多领域运行时**：
 
 **做了什么**
 - **后端多领域运行时**：`settings.py` 启动时加载 `domain_profiles/` 下**全部**领域到 `DOMAIN_PROFILES`，新增 `get_profile(kb_id)` 运行时取配置——领域键 = 知识库 ID（valorant / ecommerce 同名），不再绑定 `APP_DOMAIN` 启动环境变量（该变量仍作为默认领域，向后兼容）。
