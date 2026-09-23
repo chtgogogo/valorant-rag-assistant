@@ -5,6 +5,24 @@
 
 ---
 
+## v3.13（2026-09-23）· 前端 markdown XSS 净化（安检 L1 第 7 项修复）
+
+**做了什么**
+- **引入 DOMPurify 3.4.15**（`frontend` 唯一新增依赖，`npm install dompurify`）：marked 自身不做 HTML 净化（sanitize 能力早已移除），LLM 输出与知识库文档内容（文档可被任何人上传）经 `renderMarkdown()` 渲染后直进 `v-html`，`<img onerror>`/`<script>`/`javascript:` 链接等载荷会原样执行——典型存储型 XSS 面。
+- **`ChatPage.vue` `renderMarkdown()` 末尾统一净化**：`mdParser.parse()` 产物先过 `DOMPurify.sanitize()` 再返回，流式增量/普通接口降级/历史恢复/撤回恢复等全部渲染路径共用此函数，一处收口全覆盖。
+- **顺带闭环同文件唯一另一处动态 `v-html`**：欢迎屏快捷问题 `q.emoji`（来自后端领域配置）同样过净化；领域配置现均为纯文本表情（📦 等），净化后渲染零变化。`cat.icon`/`VALORANT_QUICK` 的 SVG 为组件内写死的字面量（可信静态内容），不改。
+
+**解决了什么**
+- 安检 L1 第 7 项（输出编码）阻断：任何人上传一份含 `<img src=x onerror=alert(1)>` 的知识库文档，提问命中后载荷随答案原样进 `v-html` 即在浏览者会话里执行。修复后事件属性/script/iframe/危险协议一律在渲染前剥离，正常 markdown（标题/加粗/代码/外链/表格/引用/列表）零误伤。
+
+**验证**
+- 前后对比（jsdom 思路，复用仓库内同版本 marked@18.0.5 + dompurify@3.4.15、与 ChatPage.vue 完全相同的 parser 配置）：修复前 5 类载荷（onerror/script/markdown javascript: 链接/iframe/字面 javascript: 链接）在渲染产物中全部原样保留（漏洞确认）；修复后逐载荷断言全部 PASS（onerror 剥离且 img 本体保留、script/iframe 整块移除、javascript: href 剥离且链接文本保留），脚本退出码 0。
+- 不误伤回归：正常业务 markdown 净化前后渲染结果一致；纯文本 emoji 净化后不变。
+- `npm run build` 通过（569ms，exit 0；警告为 element-plus 依赖 @vueuse/core 的既有 PURE 注解提示，与本改动无关）；`dist/index.html` 实际引用的新产物 `index-Dql4JR3I.js` 内含 DOMPurify 与 7 处 sanitize 调用（bundle 走查）。
+- 本卡无后端 Python 改动（py_compile/pytest 按卡跳过）；8001/5174 现役实例未动；无 git 操作。完整证据链见 `docs/pipeline/安检报告.md` 第 7 项。
+
+---
+
 ## v3.12（2026-09-23）· 审计接口挂鉴权 + 死代码双清（安检 L1 修复）
 
 **做了什么**

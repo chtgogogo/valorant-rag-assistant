@@ -207,6 +207,7 @@
 import { ref, reactive, nextTick, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { sendMessage, sendMessageStream, clearHistory, rollbackHistory, getHistory, testChat, getDomains, sendFeedback } from '../api.js'
 
 const emit = defineEmits(['manage'])
@@ -307,7 +308,9 @@ const VALORANT_QUICK = [
 const quickQuestions = computed(() => {
   const fromDomain = currentProfile.value?.quick_questions || []
   if (fromDomain.length) {
-    return fromDomain.map((q) => ({ emoji: q.emoji || '', label: q.label, text: q.text }))
+    // 【v3.13】emoji 来自后端领域配置（动态内容）且经 v-html 渲染，同样过 DOMPurify；
+    // 领域配置现均为纯文本表情（📦 等），净化后渲染结果不变
+    return fromDomain.map((q) => ({ emoji: DOMPurify.sanitize(q.emoji || ''), label: q.label, text: q.text }))
   }
   return VALORANT_QUICK
 })
@@ -326,7 +329,11 @@ const mdParser = new Marked({
 function renderMarkdown(text) {
   try {
     // marked v18: parse() 返回 Promise，但同步调用时立即返回
-    return mdParser.parse(text) || text
+    const raw = mdParser.parse(text) || text
+    // 【v3.13 安全修复】渲染内容 = LLM 输出 + 知识库文档（文档可被任何人上传），
+    // marked 本身不做 HTML 净化，<img onerror>/<script>/javascript: 会原样进 v-html。
+    // 统一在进 v-html 前用 DOMPurify 净化：剥离事件属性、script、危险协议，保留正常 markdown 标签。
+    return DOMPurify.sanitize(raw)
   } catch {
     return text.replace(/</g, '&lt;').replace(/>/g, '&gt;')
   }
