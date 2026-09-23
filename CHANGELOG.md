@@ -5,6 +5,26 @@
 
 ---
 
+## v3.12（2026-09-23）· 审计接口挂鉴权 + 死代码双清（安检 L1 修复）
+
+**做了什么**
+- **审计接口补挂鉴权**（`backend/main.py`）：`/api/audit/recent` 补上 `dependencies=[Depends(verify_api_key)]`，与文档/向量/对话/工单/反馈/领域六个路由完全同款——该接口存有全部用户问答原文，此前是全项目唯一未挂鉴权的业务路由。放行逻辑（`utils/auth.py`）：`AUTH_ENABLED=0`（settings 默认值，`os.getenv("AUTH_ENABLED","0")=="1"` 才开启）时 `verify_api_key` 直接 return 放行，因此默认配置下本地行为零变化，管理页审计表不受影响；企业部署设 `AUTH_ENABLED=1` 后无/错 key 返回 401。
+- **删除死函数**（`backend/services/chat_service.py`）：删掉 `test_llm_call` 整个函数（含注释头）。该函数形参是 `question`，函数体却引用未定义的 `question_for_prompt`，一调用必崩 `NameError`，属遗留死代码。主流程里的同名局部变量 `question_for_prompt`（官方别名替换结果）是正常代码，未受影响。
+- **删除死代码路由**（`backend/routers/chat_router.py`）：`GET /api/chat/test_llm` 是上述死函数的唯一调用方，函数删除后留着会变成"调用即 ImportError"的暗雷，故随链一并删除；`GET /api/chat/test`（模块加载测试）保留——前端 ChatPage 挂载时调它做后端在线检测，是活代码。
+- **前端核查结论（零改动）**：全量 grep 证实前端没有任何按钮或 api 函数调用"测试大模型"接口（`测试大模型`/`test-llm`/`test_llm` 在 `frontend/src` 零命中）；`api.js` 的 `testChat()` 调的是 `/chat/test`（模块加载测试，供在线状态指示），与死代码链无关，按外科修改原则不动。
+
+**解决了什么**
+- 安检 L1 两项阻断：①审计接口裸奔——问答原文接口无鉴权防护，企业部署形态下任何人可拉走全部用户问答；②死函数一调必崩且路由可达，属于随时可触发的故障点。修复后鉴权矩阵六路由+审计全覆盖，死代码链（路由→函数）清零。
+
+**验证**
+- 8002 验证实例（用户的 8001/5174 现役实例未动）：`AUTH_ENABLED=1 API_KEYS=testkey123` 启动，curl `/api/audit/recent?days=1` 无 key → `HTTP/1.1 401 Unauthorized {"detail":"API Key 无效或缺失"}`；带正确 `X-API-Key: testkey123` → `HTTP/1.1 200 OK`（26921 字节真实审计数据）。恢复默认（不设 AUTH_ENABLED）重启同端口，无 key → `HTTP_CODE=200 SIZE=26921B`、`{"code":200,...}` 正常返回——本地行为零变化实证。
+- 死代码清零：`grep -n "test_llm_call\|question_for_prompt" backend/services/chat_service.py` 无函数残留，`question_for_prompt` 仅剩主流程 10 处正常变量引用；后端全局 grep `test_llm` 零代码命中。
+- `py_compile` 通过（main.py / chat_service.py / chat_router.py / utils/auth.py 四文件）。
+- 前端：vite 验证实例（5175 端口，现役 5174 未动）263ms ready 无报错，根路径与 api.js/AdminPage.vue/ChatPage.vue/KnowledgeManage.vue/App.vue 编译产物逐个 curl 均 HTTP 200。
+- 验完 8002/5175 验证进程已全部结束、端口无残留；无 git 操作。
+
+---
+
 ## v3.11（2026-09-23）· LLM 调用节流提速（调用次数减半 + 快速失败）
 
 **做了什么**

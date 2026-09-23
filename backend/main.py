@@ -39,8 +39,8 @@ app.include_router(ticket_router, prefix="/api/ticket", tags=["售后工单"], d
 app.include_router(feedback_router, prefix="/api/feedback", tags=["用户反馈"], dependencies=[Depends(verify_api_key)])
 app.include_router(domain_router, prefix="/api/domain", tags=["领域切换"], dependencies=[Depends(verify_api_key)])
 
-# 审计日志查询接口（运维排查用）
-@app.get("/api/audit/recent", tags=["审计日志"], summary="查询最近N天问答审计记录")
+# 审计日志查询接口（运维排查用）；【v3.12】补挂鉴权，与其他六个路由同款——审计存用户问答原文，不能裸奔
+@app.get("/api/audit/recent", tags=["审计日志"], summary="查询最近N天问答审计记录", dependencies=[Depends(verify_api_key)])
 def recent_audit(days: int = 7):
     from utils.audit import read_recent_audit
     return {"code": 200, "msg": "success", "data": read_recent_audit(days)}

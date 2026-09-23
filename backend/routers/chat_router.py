@@ -3,15 +3,10 @@ from fastapi.responses import StreamingResponse
 import json
 from schemas.models import ApiResponse, ChatRequest, ChatResponse, ChatMessage
 chat_router = APIRouter()
-# 测试接口保留
+# 测试接口保留（/test 供前端后端在线检测使用；【v3.12】"测试大模型"死代码路由已随 chat_service 死函数一并删除）
 @chat_router.get("/test", response_model=ApiResponse, summary="测试模块加载")
 async def test_chat_module():
     return ApiResponse(msg="对话模块加载成功", data={"status": "测试通过"})
-@chat_router.get("/test_llm", response_model=ApiResponse, summary="测试大模型调用")
-async def test_llm(question: str = "你好，介绍一下你自己"):
-    from services.chat_service import test_llm_call
-    answer = test_llm_call(question)
-    return ApiResponse(data={"answer": answer})
 # 核心发送接口
 @chat_router.post("/send", response_model=ApiResponse, summary="发送消息获取回答")
 async def send_message(req: ChatRequest):

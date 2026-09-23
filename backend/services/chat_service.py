@@ -26,14 +26,6 @@ llm = make_llm(LLM_CONFIG.get("thinking", False), LLM_CONFIG["timeout"])        
 llm_rewrite = make_llm(LLM_CONFIG.get("thinking_rewrite", False),
                        LLM_CONFIG["thinking_timeout"] if LLM_CONFIG.get("thinking_rewrite") else LLM_CONFIG["timeout"])  # 查询改写
 llm_critic = make_llm(LLM_CONFIG.get("thinking_critic", True), LLM_CONFIG["thinking_timeout"])  # 质量自评：默认开思考
-# -------------------------- 大模型调用测试 --------------------------
-def test_llm_call(question: str) -> str:
-    """测试大模型是否能正常调用，返回回答文本"""
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "你是无畏契约游戏助手，简短回答即可。"),
-        ("human", "{question}")
-    ])
-    return _call_llm_with_retry(prompt, {"question": question_for_prompt})
 
 # -------------------------- 记忆相关工具函数 --------------------------
 def _get_history_path(session_id: str) -> str:
