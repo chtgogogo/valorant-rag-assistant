@@ -29,7 +29,7 @@ _cache_lock = threading.Lock()
 
 
 def _tokenize(text: str) -> list[str]:
-    """jieba 中文分词，过滤空白和单字符标点"""
+    """jieba 中文分词，过滤空白（标点会被 jieba 切成独立 token 并保留：双侧同现、IDF 极低，对 BM25 无实害）"""
     return [t for t in jieba.lcut(text) if t.strip()]
 
 

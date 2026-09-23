@@ -28,6 +28,12 @@ jobs:
         run: |
           python -m compileall backend -q
 
+      - name: 单元测试（纯函数层，无 key/无网络/秒级）
+        working-directory: backend
+        run: |
+          pip install pytest -q
+          python -m pytest tests
+
       - name: 重建知识库向量索引（CI 环境无数据目录，评测前先建库；模型从 HF 官方源下载）
         working-directory: backend
         env:

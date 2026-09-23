@@ -17,6 +17,7 @@ class SearchResult(BaseModel):
     score: float  # 排序分数（rerank 分 / RRF 分 / 余弦相似度，随管线阶段变化）
     doc_id: str  # 文档ID
     dense_score: Optional[float] = None  # 向量余弦相似度（混合检索保留，供兜底阈值判断）
+    rerank_degraded: bool = False  # 【v3.16】重排失败降级时置 True：score 已退回召回量纲，兜底判定应改用 dense_score 余弦阈值
 # 对话消息结构（多轮历史持久化格式）
 class ChatMessage(BaseModel):
     role: str  # 只能是 user / assistant

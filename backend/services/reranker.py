@@ -93,4 +93,8 @@ def rerank(question: str, candidates: list[SearchResult],
         return ranked
     except Exception as e:
         logger.warning("重排序失败(降级为召回排序): %s", e)
+        # 【v3.16】标记量纲已降级：此时 score 是召回分（BM25/RRF），非 rerank sigmoid 分，
+        # 兜底判定（_should_fallback）据此改用 dense_score 余弦阈值，避免误判
+        for c in candidates:
+            c.rerank_degraded = True
         return candidates[:top_k]

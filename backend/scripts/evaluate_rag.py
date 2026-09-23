@@ -76,6 +76,7 @@ def main():
     type_stats = {}  # 分类型检索统计 {type: {"n":x,"hit":y}}
     refusal_total = 0
     refusal_ok = 0
+    observe_total = 0  # 【v3.16】观察题计数：只记录行为不计分，须从检索指标分母扣除
     details = []
 
     for case in cases:
@@ -125,6 +126,7 @@ def main():
 
         # ---- v3.4 观察题：只记录行为不计分（边界题期望行为待人工复核）----
         if case.get("observe"):
+            observe_total += 1
             if args.skip_llm:
                 refused = not results or _should_fallback(results)
                 row["behavior"] = "拒答" if refused else "正常回答"
@@ -172,7 +174,9 @@ def main():
         details.append(row)
 
     # ---- 汇总输出 ----
-    retrieval_cases = len(cases) - refusal_total
+    # 【v3.16】检索指标分母只含真实检索题：拒答/官方直答/观察题均不计分，也不进分母
+    # （此前只扣拒答题，观察题与官方题留在分母里稀释 Hit@5/MRR，与"不计分"口径不符）
+    retrieval_cases = len(cases) - refusal_total - official_total - observe_total
     print(f"\n{'-'*62}\n逐条明细")
     for row in details:
         flag = "✓拒答" if row.get("refused") else (f"命中@{row['hit_rank']}" if row.get("hit_rank") else "✗未命中")
@@ -221,7 +225,12 @@ def main():
         rep = os.path.join(rep_dir, f"report_{args.mode}_{datetime.datetime.now():%Y%m%d_%H%M%S}.md")
         with open(rep, "w", encoding="utf-8") as f:
             f.write(f"# 评测报告 {args.mode}（{datetime.datetime.now():%Y-%m-%d %H:%M:%S}）\n\n")
-            f.write(f"- 用例：{len(cases)} 条（检索 {retrieval_cases} + 拒答 {refusal_total}）｜ 生成：{'关' if args.skip_llm else '开'}\n")
+            extra_counts = ""
+            if official_total:
+                extra_counts += f" + 官方 {official_total}"
+            if observe_total:
+                extra_counts += f" + 观察 {observe_total}"
+            f.write(f"- 用例：{len(cases)} 条（检索 {retrieval_cases} + 拒答 {refusal_total}{extra_counts}）｜ 生成：{'关' if args.skip_llm else '开'}\n")
             f.write(f"- Hit@5: {hit_cnt}/{retrieval_cases}｜MRR: {mrr_sum/retrieval_cases:.3f}\n")
             if not args.skip_llm:
                 f.write(f"- 关键词覆盖: {kw_hit}/{kw_total}\n")

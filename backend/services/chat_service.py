@@ -3,6 +3,7 @@ import json
 import re
 import time
 from langchain.prompts import ChatPromptTemplate
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from config.settings import (
     LLM_CONFIG, SYSTEM_PROMPT, CHAT_CONFIG, RAG_CONFIG,
     FALLBACK_ANSWER, REFUSE_ANSWER, CUSTOM_RULES, DEFAULT_KB_ID, TICKET_CONFIG,
@@ -108,6 +109,11 @@ def _should_fallback(results: list[SearchResult]) -> bool:
     if not results:
         return True
     if RAG_CONFIG.get("enable_rerank", True):
+        # 【v3.16】重排失败降级时 score 已是召回量纲（BM25/RRF，如 8.5），按 rerank
+        # 阈值 0.60 比会失真——退回余弦相似度阈值判定（与无 rerank 分支同口径）
+        if results[0].rerank_degraded:
+            best = max((r.dense_score if r.dense_score is not None else r.score) for r in results)
+            return best < RAG_CONFIG["score_threshold"]
         return results[0].score < RAG_CONFIG["rerank_score_threshold"]
     # 无 rerank 时退回向量余弦相似度阈值（兼容旧管线）
     best = max((r.dense_score if r.dense_score is not None else r.score) for r in results)
@@ -244,7 +250,10 @@ def _build_sources(results: list[SearchResult]) -> list[dict]:
 
 def _build_rag_messages(history: list[ChatMessage], results: list[SearchResult], question: str,
                         profile: dict = None) -> ChatPromptTemplate:
-    """拼 RAG 提示词：系统提示 + 参考资料 + 历史 + 最新问题（系统提示与拒答话术随领域）"""
+    """拼 RAG 提示词：系统提示 + 参考资料 + 历史 + 最新问题（系统提示与拒答话术随领域）
+    【v3.16】系统提示/历史改用 Message 对象直装，不走模板插值——知识库内容与历史消息
+    含 {xxx}（JSON 示例、代码片段）时会被 langchain 当占位符解析导致调用崩溃
+    （Critic 提示词同款坑 v3.3 已修，本处补齐）；仅最后一条 human 保留 {question} 占位符。"""
     profile = profile or get_profile()
     sys_prompt = profile.get("system_prompt", SYSTEM_PROMPT)
     refuse = profile.get("refuse_answer", REFUSE_ANSWER)
@@ -252,17 +261,19 @@ def _build_rag_messages(history: list[ChatMessage], results: list[SearchResult],
     context = "\n".join(
         [f"参考资料{i+1}（来源：{r.source}）：{r.content}" for i, r in enumerate(results)]
     )
-    messages = [
-        ("system", sys_prompt + f"""
+    system_text = sys_prompt + f"""
 请严格基于参考资料和历史对话回答问题，遵守以下规则：
 1. 参考资料：{context}
 2. 如果问题与本领域完全无关（其他领域闲聊、写代码、做菜、天气等日常请求），即使参考资料里出现了相关字样，也必须直接返回：{refuse}
 3. 参考资料里没有的内容不要编造，直接返回兜底话术
 4. 不要重复介绍同一技能或同一段内容；如果答案已经说清楚，直接结束。
-"""),
-    ]
+"""
+    messages = [SystemMessage(content=system_text)]
     for msg in history:
-        messages.append((msg.role, msg.content))
+        if msg.role == "assistant":
+            messages.append(AIMessage(content=msg.content))
+        else:
+            messages.append(HumanMessage(content=msg.content))
     messages.append(("human", "{question}"))
     return ChatPromptTemplate.from_messages(messages)
 
