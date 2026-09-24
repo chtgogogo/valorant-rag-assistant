@@ -57,6 +57,10 @@ LLM_CONFIG = {
     "timeout": int(os.getenv("LLM_TIMEOUT", "30")),               # 普通调用超时
     "thinking_timeout": int(os.getenv("LLM_THINKING_TIMEOUT", "60")),  # 开思考的调用放宽（思考本身 10~30s）
     "max_retries": int(os.getenv("LLM_MAX_RETRIES", "1")),        # 【v3.11】openai 客户端自动重试次数（原默认 2）：与上层重试叠加曾把限流最坏耗时拖到 2 分钟级，收紧为 1 快速失败
+    # 【v3.18】限流兜底模型：主模型限流/过载时自动切换（同账号同密钥，只换模型名）。
+    # 默认 glm-4-flashx（智谱最便宜付费款，约 0.1 元/百万tokens 级，以官网为准）——
+    # 兜底只在限流时触发，日常花费趋近于零；设为空串关闭兜底
+    "fallback_model": os.getenv("LLM_FALLBACK_MODEL", "glm-4-flashx"),
 }
 
 # 【v3.15】密钥校验延迟化：import 本模块不再强制要求密钥——评测/CI 的 --skip-llm

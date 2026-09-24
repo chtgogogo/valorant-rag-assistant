@@ -90,6 +90,78 @@ class TestBuildRagMessages:
         assert any("{token}" in m.content for m in msgs)
 
 
+class TestRatelimitFallback:
+    """【v3.18】限流兜底：主模型限流/过载 → 自动切备用模型（连接类错误不切）"""
+
+    @staticmethod
+    def _runnable(fn):
+        from langchain_core.runnables import RunnableLambda
+        return RunnableLambda(fn)
+
+    @staticmethod
+    def _resp(text: str):
+        from types import SimpleNamespace
+        return SimpleNamespace(content=text)
+
+    def test_rate_limited_switches_to_fallback(self, monkeypatch):
+        monkeypatch.setitem(cs.LLM_CONFIG, "fallback_model", "glm-4-flashx")
+        monkeypatch.setattr(cs.time, "sleep", lambda s: None)  # 跳过重试退避等待
+
+        def boom(_):
+            raise Exception("Error code: 429")
+        monkeypatch.setattr(cs, "get_llm", lambda: self._runnable(boom))
+        monkeypatch.setattr(cs, "get_llm_fallback",
+                            lambda: self._runnable(lambda _: self._resp("备用模型答案")))
+
+        flag = []
+        answer = cs._call_llm_with_retry(cs._CRITIC_PROMPT,
+                                         {"question": "q", "context": "c"}, fallback_used=flag)
+        assert answer == "备用模型答案"
+        assert flag == [True]
+
+    def test_connection_error_skips_fallback(self, monkeypatch):
+        # 连接失败换模型无意义：不切兜底，直接友好文案
+        monkeypatch.setitem(cs.LLM_CONFIG, "fallback_model", "glm-4-flashx")
+        monkeypatch.setattr(cs.time, "sleep", lambda s: None)
+
+        def boom(_):
+            raise Exception("Connection error.")
+        monkeypatch.setattr(cs, "get_llm", lambda: self._runnable(boom))
+        fallback_called = []
+
+        def fb(_):
+            fallback_called.append(True)
+            return self._resp("x")
+        monkeypatch.setattr(cs, "get_llm_fallback", lambda: self._runnable(fb))
+
+        answer = cs._call_llm_with_retry(cs._CRITIC_PROMPT, {"question": "q", "context": "c"})
+        assert answer.startswith("抱歉")
+        assert fallback_called == []
+
+    def test_fallback_disabled_via_empty_model(self, monkeypatch):
+        monkeypatch.setitem(cs.LLM_CONFIG, "fallback_model", "")  # 显式关闭
+        monkeypatch.setattr(cs.time, "sleep", lambda s: None)
+
+        def boom(_):
+            raise Exception("Error code: 429")
+        monkeypatch.setattr(cs, "get_llm", lambda: self._runnable(boom))
+
+        answer = cs._call_llm_with_retry(cs._CRITIC_PROMPT, {"question": "q", "context": "c"})
+        assert answer.startswith("抱歉")
+
+    def test_fallback_also_fails_returns_friendly(self, monkeypatch):
+        monkeypatch.setitem(cs.LLM_CONFIG, "fallback_model", "glm-4-flashx")
+        monkeypatch.setattr(cs.time, "sleep", lambda s: None)
+
+        def boom(_):
+            raise Exception("Error code: 429")
+        monkeypatch.setattr(cs, "get_llm", lambda: self._runnable(boom))
+        monkeypatch.setattr(cs, "get_llm_fallback", lambda: self._runnable(boom))
+
+        answer = cs._call_llm_with_retry(cs._CRITIC_PROMPT, {"question": "q", "context": "c"})
+        assert answer.startswith("抱歉")
+
+
 class TestHistoryLock:
     def test_concurrent_appends_no_loss(self, tmp_path, monkeypatch):
         # v3.17 per-session 锁：多线程并发追加同一会话，一条都不能丢

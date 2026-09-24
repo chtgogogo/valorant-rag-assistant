@@ -15,16 +15,19 @@ logger = logging.getLogger(__name__)
 
 
 def make_llm(thinking: bool, timeout: int,
-             temperature: float = None, max_tokens: int = None) -> ChatOpenAI:
+             temperature: float = None, max_tokens: int = None,
+             model_name: str = None) -> ChatOpenAI:
     """创建一个带思考开关的 ChatOpenAI 实例
     :param thinking: True=开启混合思考（答案前先推理，慢但精度高）；False=显式关闭（快）
     :param timeout: 该实例的调用超时秒数（开思考的调用建议用 thinking_timeout）
+    :param model_name: 覆盖默认模型名（【v3.18】限流兜底实例用，如 glm-4-flashx）
     """
     require_api_key()  # 【v3.15】创建实例前统一校验密钥（中文指引），替代原 import 时强校验
+    resolved_model = model_name or LLM_CONFIG["model_name"]
     inst = ChatOpenAI(
         api_key=LLM_CONFIG["api_key"],
         base_url=LLM_CONFIG["base_url"],
-        model=LLM_CONFIG["model_name"],
+        model=resolved_model,
         temperature=LLM_CONFIG["temperature"] if temperature is None else temperature,
         max_tokens=LLM_CONFIG["max_tokens"] if max_tokens is None else max_tokens,
         timeout=timeout,
@@ -40,5 +43,5 @@ def make_llm(thinking: bool, timeout: int,
 
     inst.client.create = _create_with_thinking
     logger.info("LLM 实例创建: model=%s thinking=%s timeout=%ss",
-                LLM_CONFIG["model_name"], thinking_type, timeout)
+                resolved_model, thinking_type, timeout)
     return inst

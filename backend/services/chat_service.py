@@ -51,6 +51,18 @@ def get_llm_critic():
         _llm_instances["critic"] = make_llm(LLM_CONFIG.get("thinking_critic", True), LLM_CONFIG["thinking_timeout"])
     return _llm_instances["critic"]
 
+
+def get_llm_fallback():
+    """限流兜底实例（【v3.18】LLM_FALLBACK_MODEL，默认 glm-4-flashx 同账号最便宜付费款；
+    设空串关闭兜底，返回 None）"""
+    if not LLM_CONFIG.get("fallback_model"):
+        return None
+    if "fallback" not in _llm_instances:
+        _llm_instances["fallback"] = make_llm(
+            thinking=False, timeout=LLM_CONFIG["timeout"],
+            model_name=LLM_CONFIG["fallback_model"])
+    return _llm_instances["fallback"]
+
 # -------------------------- 记忆相关工具函数 --------------------------
 def _get_history_path(session_id: str) -> str:
     return os.path.join(CHAT_CONFIG["history_path"], f"{session_id}.json")
@@ -323,22 +335,41 @@ def _llm_error_event(e: Exception) -> dict:
     return {"type": "error", "code": "unavailable", "message": "模型服务暂时不可用，请稍后再试~"}
 
 
-def _call_llm_with_retry(prompt, inputs, max_retry=1, model=None):
+def _call_llm_with_retry(prompt, inputs, max_retry=1, model=None, fallback_used=None):
     """大模型调用带重试：失败自动重试，最终失败返回友好提示（真实错误已写入日志）
     【v3.11】重试从 2 次收紧为 1 次、退避固定 1.5s——SDK 自动重试与上层重试叠加
-    曾把限流最坏耗时拖到 2 分钟级；现在最多 1.5s 后快速失败（流式路径由调用方
-    的 except 走 error 事件结束，非流式路径返回友好文案）。
-    :param model: 指定环节实例（get_llm_rewrite()/get_llm_critic()），默认用最终答案生成实例"""
+    曾把限流最坏耗时拖到 2 分钟级；现在最多 1.5s 后快速失败。
+    【v3.18】主模型重试耗尽且属限流/模型过载类错误时，自动切换 LLM_FALLBACK_MODEL
+    兜底模型再试一次（同账号同密钥只换模型名）；连接失败/超时换模型无意义，不切。
+    :param model: 指定环节实例（get_llm_rewrite()/get_llm_critic()），默认用最终答案生成实例
+    :param fallback_used: 传空 list 可回收兜底标记（接管成功时 append(True)），供审计打标"""
+    last_err = None
     for i in range(max_retry + 1):
         try:
             chain = prompt | (model or get_llm())
             response = chain.invoke(inputs)
             return response.content
         except Exception as e:
+            last_err = e
             logger.error("大模型调用失败(第%d次) 输入=%s 错误=%s", i + 1, inputs, e)
             if i == max_retry:
-                return "抱歉，当前服务有点忙，请稍后再试~"
+                break
             time.sleep(1.5)  # 【v3.11】固定短退避重试一次，再失败立即快速结束（原递增退避 3s/6s）
+
+    fb_model = LLM_CONFIG.get("fallback_model")
+    err_code = _llm_error_event(last_err)["code"] if last_err else None
+    if fb_model and err_code in ("rate_limited", "server_error"):
+        logger.warning("[兜底] 主模型%s，切换备用模型 %s", err_code, fb_model)
+        try:
+            chain = prompt | get_llm_fallback()
+            response = chain.invoke(inputs)
+            if fallback_used is not None:
+                fallback_used.append(True)
+            logger.info("[兜底] 备用模型 %s 接管成功", fb_model)
+            return response.content
+        except Exception as e2:
+            logger.error("[兜底] 备用模型 %s 也失败: %s", fb_model, e2)
+    return "抱歉，当前服务有点忙，请稍后再试~"
 
 
 def _auto_create_ticket(session_id: str, question: str, rewritten: str,
@@ -405,9 +436,13 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple
         answer = P["fallback_answer"] + _auto_create_ticket(session_id, question, rewritten, results, kb_id)
         sources = []
     else:
-        # 8. 拼提示词（加拒答规则），带重试调用大模型
+        # 8. 拼提示词（加拒答规则），带重试调用大模型（【v3.18】限流自动切兜底模型）
         prompt = _build_rag_messages(history, results, question_for_prompt, profile=P)
-        answer = _call_llm_with_retry(prompt, {"question": question_for_prompt})
+        fallback_flag = []
+        answer = _call_llm_with_retry(prompt, {"question": question_for_prompt},
+                                      fallback_used=fallback_flag)
+        if fallback_flag:
+            pipeline_desc += "+fallback"
         sources = _build_sources(results)
 
     # 9. 更新历史（持锁）+ 审计留痕
@@ -484,11 +519,34 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
             # 改推结构化 error 事件让前端停止 loading 并显示错误气泡，杜绝无限转圈
             logger.error("流式大模型调用失败: %s", e)
             error_event = _llm_error_event(e)
-            log_qa(session_id, question, rewritten, sources,
-                   f"[生成失败:{error_event['code']}] {error_event['message']}",
-                   (time.time() - start_time) * 1000, kb_id, pipeline_desc + "+llm_error")
-            yield error_event
-            return  # 错误后正常结束流：不发残缺答案，也不把失败文案写进对话历史
+            # 【v3.18】尚未产出任何 token 且属限流/模型过载类错误 → 备用模型重新流式生成；
+            # 已有部分 token 时换模型续写会前后不一致，维持 error 事件收尾
+            fb_model = LLM_CONFIG.get("fallback_model")
+            if not parts and fb_model and error_event["code"] in ("rate_limited", "server_error"):
+                logger.warning("[兜底] 主模型%s，流式切换备用模型 %s", error_event["code"], fb_model)
+                try:
+                    chain = prompt | get_llm_fallback()
+                    for chunk in chain.stream({"question": question_for_prompt}):
+                        delta = chunk.content or ""
+                        if delta:
+                            parts.append(delta)
+                            yield {"type": "token", "delta": delta}
+                    answer = "".join(parts)
+                    pipeline_desc += "+fallback"
+                except Exception as e2:
+                    logger.error("[兜底] 备用模型 %s 也失败: %s", fb_model, e2)
+                    error_event = _llm_error_event(e2)
+                    log_qa(session_id, question, rewritten, sources,
+                           f"[生成失败:{error_event['code']}] {error_event['message']}",
+                           (time.time() - start_time) * 1000, kb_id, pipeline_desc + "+llm_error")
+                    yield error_event
+                    return  # 错误后正常结束流：不发残缺答案，也不把失败文案写进对话历史
+            else:
+                log_qa(session_id, question, rewritten, sources,
+                       f"[生成失败:{error_event['code']}] {error_event['message']}",
+                       (time.time() - start_time) * 1000, kb_id, pipeline_desc + "+llm_error")
+                yield error_event
+                return  # 错误后正常结束流：不发残缺答案，也不把失败文案写进对话历史
 
     history = append_history(session_id, question, answer)
     log_qa(session_id, question, rewritten, sources, answer,
