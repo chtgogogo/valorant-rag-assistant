@@ -209,6 +209,18 @@ QUERY_REWRITE_PROMPT = DOMAIN_PROFILE.get("query_rewrite_prompt", "")
 SYSTEM_PROMPT = DOMAIN_PROFILE["system_prompt"]
 
 # ------------------------------------------------------
+# 5.3.1 成本防护配置（v3.24）：主模型已切付费通道（按量计费），
+#     输入限长 + IP 双层限流把"被刷烧 token"的上限锁死；
+#     单次问答成本约 0.00035 元 → 默认上限 100 次/天/IP ≈ 0.035 元/天
+# ------------------------------------------------------
+MAX_QUESTION_CHARS = int(os.getenv("MAX_QUESTION_CHARS", "300"))  # 单次提问最大字符数
+RATE_LIMIT_CONFIG = {
+    "enabled": os.getenv("RATE_LIMIT_ENABLED", "1") == "1",
+    "per_minute": int(os.getenv("RATE_LIMIT_CHAT_PER_MIN", "5")),  # 每分钟提问上限（挡刷屏脚本）
+    "daily": int(os.getenv("RATE_LIMIT_CHAT_DAILY", "100")),       # 每日提问上限（挡长期薅）
+}
+
+# ------------------------------------------------------
 # 5.4 工单闭环配置（v3.5：低置信兜底 → 自动建工单 → 人工答案回流知识库）
 # ------------------------------------------------------
 TICKET_CONFIG = {

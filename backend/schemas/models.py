@@ -19,6 +19,7 @@ class SearchResult(BaseModel):
     dense_score: Optional[float] = None  # 向量余弦相似度（混合检索保留，供兜底阈值判断）
     rerank_degraded: bool = False  # 【v3.16】重排失败降级时置 True：score 已退回召回量纲，兜底判定应改用 dense_score 余弦阈值
     version: Optional[int] = None  # 【v3.21】所引文档块的版本号（同名文档重复上传递增；旧数据无此字段为 None）
+    chunk_id: Optional[str] = None  # 【v3.25】块唯一 id（chroma 块 id）：RRF 融合键与溯源锚点；旧数据为 None
 # 对话消息结构（多轮历史持久化格式）
 class ChatMessage(BaseModel):
     role: str  # 只能是 user / assistant
@@ -28,7 +29,8 @@ class ChatRequest(BaseModel):
     # 【v3.20】session_id 双保险之一：模型层 pattern 拒绝路径穿越字符
     # （服务层 _get_history_path 入口还有同款白名单校验，两层防线独立生效）
     session_id: str = Field(pattern=r"^[\w\-]{1,64}$")  # 会话ID，隔离不同用户
-    question: str  # 用户问题
+    # 【v3.24】模型层 1000 字硬兜底（防超大包）；可调软上限 MAX_QUESTION_CHARS 在服务层校验
+    question: str = Field(max_length=1000)  # 用户问题
     kb_id: Optional[str] = "valorant"  # 默认无畏契约知识库
 # 对话返回结构（对话服务 → 前端）
 class ChatResponse(BaseModel):
