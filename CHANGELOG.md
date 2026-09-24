@@ -5,6 +5,46 @@
 
 ---
 
+## v3.22（2026-09-25）· 可观测性：Token 用量 + 失败分类 + 审计哈希链 + 汇总报表 + 首字延迟
+
+**优化了哪些地方**
+1. **Token 用量全链路记账**（`utils/audit.py` + `chat_service` + `query_rewriter`）：
+   新增问答级 token 账本，一次问答内改写/评估/生成多次调用分别记账再汇总；智谱返回的
+   真实 usage（prompt/completion/total）优先——非流式 invoke 与流式最后分片都能取到时
+   记真实值；取不到（兼容端点不回 usage）按实际渲染提示词与答案长度估算，并把
+   `estimated=True` 如实标注。审计 `token_usage` 含总和 + `by_stage` 分环节。
+2. **失败分类**：审计新增 `error_class` 字段，枚举 rate_limit / timeout / empty_answer /
+   generation_error / refusal / none——低置信兜底与敏感词拦截标 refusal，限流/超时/生成失败
+   各归各类，正常为 none。旧记录无该字段读作 none，完全向后兼容。
+3. **检索可观测**：审计新增 `rerank_top_score`（top1 重排分数）与 `retrieved_count`
+   （最终召回块数），缓存命中/官方直答等无检索路径自然留空。
+4. **审计哈希链**：每条记录追加 `prev_hash`（上一条 self_hash）与 `self_hash`
+   （本条内容+prev 的 SHA-256 链式计算）；`verify_chain()` 读取时校验断链/篡改即告警；
+   进程重启自动从文件尾续链；旧格式记录自动跳过校验、新记录重新起链——只加字段，
+   旧文件照常读。
+5. **bench_latency 首字延迟**：新增 TTFB 测量（POST /api/chat/stream 到首个 token 事件），
+   使用同义变体问题避开前两轮语义缓存（否则测出的是缓存命中延迟而非生成首字），
+   报告单列 TTFB P50/P95 与逐题数值。
+
+**新增了什么**
+- `scripts/audit_report.py` 审计汇总报表：总请求数 / 拒答数与拒答率 / error_class 分布 /
+  P50 与 P95 延迟 / token 总量与每轮均值 / 按日期分列 / 哈希链校验，终端打印 + 落盘
+  `eval/reports/audit_report_*.md`；支持 `--days` / `--file` 过滤。
+- 新增 `backend/tests/test_observability.py` 13 条测试：审计新字段、哈希链（衔接/篡改检出/
+  旧格式兼容/重启续链）、记账（真实 vs 估算）、报表统计（假 jsonl 驱动）。
+
+**解决了什么问题**
+- 每轮问答花多少 token 不可知——现在真实/估算口径分明，改写+生成分项可查
+  （实测样例：critic 895 + rewrite 107 = 1002 tokens/轮，estimated=False 智谱真实返回）。
+- 审计只有耗时没有失败原因，出问题只能翻服务日志——现在 failure 分类可直接 SQL 式统计。
+- 审计文件无法证明"没被改过"——哈希链让篡改可检出。
+- 首字延迟从未测过——TTFB 首次落盘（2026-09-25 CPU 口径实测 P50≈1.7s / P95≈3.9s，
+  报告 `bench_v322_20260925_053700.md`）。
+- 审计数据没有汇总视图——`audit_report.py` 一条命令出全量报表（当前 78 条历史记录
+  已出首份报表落盘）。
+
+---
+
 ## v3.21（2026-09-25）· 索引新鲜度与版本管理：BM25 指纹缓存键 + doc_list 原子写
 
 **优化了哪些地方**

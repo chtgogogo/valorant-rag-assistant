@@ -35,6 +35,20 @@ QUESTIONS = [
     "手枪局买什么比较好",
 ]
 
+# 【v3.22】TTFB 轮专用变体问题：与 miss 轮同义但措辞不同——若复用原题会命中
+# 前两轮写入的语义缓存，测出的将是缓存命中延迟而非真实生成首字延迟；
+# 语义相近的变体仍可能个别命中缓存（阈值 0.92），报告口径已注明
+TTFB_QUESTIONS = [
+    "刚开始玩应该先练哪个英雄",
+    "暴徒跟幻影的差别是什么",
+    "没钱的时候应该怎么买装备",
+    "捷风的玩法思路是什么",
+    "排位分数是怎么计算的",
+    "爆头线指的是什么",
+    "怎么控制地图啊",
+    "手枪局应该买什么",
+]
+
 
 def _pct(sorted_ms: list, p: float) -> float:
     if not sorted_ms:
@@ -59,6 +73,25 @@ def run_round(do_post, tag: str) -> list:
     return rows
 
 
+def measure_ttfb(do_stream, tag: str = "ttfb") -> list:
+    """【v3.22】首字延迟（TTFB）：POST /api/chat/stream 到收到第一个 token 事件的毫秒数"""
+    rows = []
+    for q in TTFB_QUESTIONS:
+        payload = {"session_id": f"bench-ttfb-{uuid.uuid4().hex[:8]}", "question": q, "kb_id": "valorant"}
+        t0 = time.time()
+        ttfb_ms = None
+        try:
+            for line in do_stream(payload):
+                if line.startswith("event: token"):
+                    ttfb_ms = round((time.time() - t0) * 1000, 1)
+                    break
+        except Exception as e:
+            print(f"  [{tag}] {q} 流式失败: {e}")
+        rows.append({"q": q, "ttfb_ms": ttfb_ms})
+        print(f"  [{tag}] {ttfb_ms if ttfb_ms is not None else 'FAIL':>8}ms  TTFB  {q}")
+    return rows
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--label", default="run", help="本次运行标签（写入报告文件名，如 paid/free）")
@@ -74,12 +107,22 @@ def main():
         http = httpx.Client(base_url=args.base_url, timeout=180)
         do_get = lambda path, **kw: http.get(path, **kw)   # noqa: E731
         do_post = lambda path, **kw: http.post(path, **kw)  # noqa: E731
+
+        def do_stream(payload):
+            with http.stream("POST", "/api/chat/stream", json=payload) as resp:
+                for line in resp.iter_lines():
+                    yield line
     else:
         from fastapi.testclient import TestClient
         from main import app
         tc = TestClient(app)
         do_get = tc.get
         do_post = lambda path, **kw: tc.post(path, **kw)  # noqa: E731
+
+        def do_stream(payload):
+            with tc.stream("POST", "/api/chat/stream", json=payload) as resp:
+                for line in resp.iter_lines():
+                    yield line
 
     cache = get_semantic_cache()
 
@@ -95,6 +138,12 @@ def main():
     miss_rows = run_round(lambda payload: do_post("/api/chat/send", json=payload), "miss")
     print("[基准] 第一轮完成，开始第二轮（应命中缓存）...")
     hit_rows = run_round(lambda payload: do_post("/api/chat/send", json=payload), "hit")
+
+    print("[基准] 开始首字延迟测量（SSE 流式，独立会话）...")
+    ttfb_rows = measure_ttfb(do_stream)
+    ttfb_vals = sorted(r["ttfb_ms"] for r in ttfb_rows if r["ttfb_ms"] is not None)
+    ttfb_sum = {"p50": _pct(ttfb_vals, 0.50), "p95": _pct(ttfb_vals, 0.95),
+                "n": len(ttfb_vals)} if ttfb_vals else {"p50": 0, "p95": 0, "n": 0}
 
     def summarize(rows):
         ms = sorted(r["ms"] for r in rows)
@@ -116,6 +165,7 @@ def main():
     print("\n===== 汇总 =====")
     print(f"miss: P50={miss_sum['p50']}ms P95={miss_sum['p95']}ms mean={miss_sum['mean']}ms")
     print(f"hit : P50={hit_sum['p50']}ms P95={hit_sum['p95']}ms mean={hit_sum['mean']}ms")
+    print(f"TTFB: P50={ttfb_sum['p50']}ms P95={ttfb_sum['p95']}ms (n={ttfb_sum['n']})")
     print(f"缓存: {json.dumps(cache_stats, ensure_ascii=False)}  答案一致轮数: {same}/{len(QUESTIONS)}")
 
     reports = Path(__file__).resolve().parent.parent / "eval" / "reports"
@@ -128,15 +178,19 @@ def main():
         f.write(f"- 查询改写思考：{'开' if LLM_CONFIG.get('thinking_rewrite') else '关'}；语义缓存："
                 f"{'开' if CACHE_CONFIG['enabled'] else '关'}（阈值 {CACHE_CONFIG['threshold']}）\n")
         f.write(f"- 检索链路预热：{warm_ms:.0f}ms（不进统计）\n\n")
-        f.write("| 问题 | miss(ms) | hit(ms) | miss来源数 | 两轮答案一致 |\n|---|---|---|---|---|\n")
-        for a, b in zip(miss_rows, hit_rows):
-            f.write(f"| {a['q']} | {a['ms']} | {b['ms']} | {a['sources']} | "
-                    f"{'✓' if a['answer_head'] == b['answer_head'] else '✗'} |\n")
+        f.write("| 问题 | miss(ms) | hit(ms) | TTFB(ms) | miss来源数 | 两轮答案一致 |\n|---|---|---|---|---|---|\n")
+        for a, b, t in zip(miss_rows, hit_rows, ttfb_rows):
+            f.write(f"| {a['q']} | {a['ms']} | {b['ms']} | {t['ttfb_ms'] if t['ttfb_ms'] is not None else '-'} "
+                    f"| {a['sources']} | {'✓' if a['answer_head'] == b['answer_head'] else '✗'} |\n")
         f.write(f"\n- miss 汇总：P50={miss_sum['p50']}ms / P95={miss_sum['p95']}ms / mean={miss_sum['mean']}ms\n")
         f.write(f"- hit  汇总：P50={hit_sum['p50']}ms / P95={hit_sum['p95']}ms / mean={hit_sum['mean']}ms\n")
+        f.write(f"- TTFB 汇总（【v3.22】首字延迟，SSE 首个 token 事件）：P50={ttfb_sum['p50']}ms / "
+                f"P95={ttfb_sum['p95']}ms（成功 {ttfb_sum['n']}/{len(QUESTIONS)}）\n")
         f.write(f"- 缓存统计：{json.dumps(cache_stats, ensure_ascii=False)}（答案一致 {same}/{len(QUESTIONS)}）\n")
         f.write(f"- 口径说明：/api/chat/send 非流式端到端（含检索+生成全程）；每题独立会话；"
-                f"miss=首轮冷问题，hit=同题复问（语义缓存命中）。单次运行样本量 8，仅供量级参考。\n")
+                f"miss=首轮冷问题，hit=同题复问（语义缓存命中）；TTFB=POST /api/chat/stream 到首个 "
+                f"token 事件（含检索+首 token 生成，独立会话，用同义变体问题避开前两轮缓存，"
+                f"个别仍可能命中）。单次运行样本量 8，仅供量级参考。\n")
     print(f"[基准] 报告已落盘: {report}")
 
 

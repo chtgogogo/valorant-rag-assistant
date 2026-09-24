@@ -8,6 +8,7 @@
 from langchain_core.prompts import ChatPromptTemplate
 from config.settings import LLM_CONFIG, QUERY_REWRITE_PROMPT, RAG_CONFIG
 from schemas.models import ChatMessage
+from utils.audit import usage_from_response, estimate_tokens, record_call
 
 import logging
 import time
@@ -47,12 +48,14 @@ def _needs_rewrite(question: str) -> bool:
     return len(question) <= 8 or any(h in question for h in _ANAPHORA_HINTS)
 
 
-def rewrite_query(question: str, history: list[ChatMessage], rewrite_prompt: str = None) -> str:
+def rewrite_query(question: str, history: list[ChatMessage], rewrite_prompt: str = None,
+                  usage_ledger: dict = None) -> str:
     """
     把多轮对话中的问题改写成独立完整的问题
     :param question: 用户最新问题
     :param history: 对话历史（取最近 3 轮做上下文）
     :param rewrite_prompt: 领域专属改写提示词（v3.6 随 kb_id 切换）；None 用默认领域
+    :param usage_ledger: 【v3.22】问答级 token 账本（改写调用的用量记这里，真实 usage 优先）
     :return: 改写后的问题；失败一律返回原问题
     """
     # 开关关闭 / 没有历史（首轮无指代可言）→ 原样返回
@@ -90,6 +93,12 @@ def rewrite_query(question: str, history: list[ChatMessage], rewrite_prompt: str
                 else:
                     raise
         rewritten = response.content.strip().strip('"').strip("'")
+        # 【v3.22】改写调用记账：真实 usage 优先，取不到按实际文本估算（标 estimated）
+        record_call(usage_ledger, "rewrite",
+                    getattr(_get_rewriter_llm(), "model_name", None) or LLM_CONFIG["model_name"],
+                    usage_from_response(response),
+                    est_prompt=estimate_tokens(history_text + question),
+                    est_completion=estimate_tokens(rewritten))
         # 改写结果为空或明显异常 → 用原问题（常见原因：开思考后 token 上限被思考吃光）
         if not rewritten:
             logger.warning("查询改写返回空 content（疑思考吃满 token 预算），降级用原问题")

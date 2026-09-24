@@ -13,7 +13,8 @@ from config.settings import (
 )
 from schemas.models import ChatMessage, SearchResult
 from utils.sensitive import filter_sensitive
-from utils.audit import log_qa
+from utils.audit import (log_qa, usage_from_response, estimate_tokens,
+                         record_call, summarize_usage)
 from services.official_data_service import answer_official_data_query, expand_query_aliases, replace_aliases_with_official
 from services.llm_factory import make_llm
 from services.semantic_cache import get_semantic_cache
@@ -138,13 +139,15 @@ def rollback_history(session_id: str, turn_index: int) -> bool:
         save_history(session_id, history[:turn_index])
         return True
 # -------------------------- 检索管线（v3.0：改写→混合召回→重排） --------------------------
-def _retrieve(question: str, history: list[ChatMessage], kb_id: str, profile: dict = None) -> tuple[str, list[SearchResult]]:
+def _retrieve(question: str, history: list[ChatMessage], kb_id: str, profile: dict = None,
+              usage_ledger: dict = None) -> tuple[str, list[SearchResult]]:
     """
     三级检索管线：
       1. 查询改写：把"它的伤害是多少"这类指代问题改写成独立完整问题（改写提示词随领域）
       2. 混合召回：BM25 关键词 + 向量语义双路召回，RRF 融合
       3. 重排序：CrossEncoder 精排取 top_k
     :param profile: 领域配置（None 时用默认领域）——改写提示词等领域内容运行时跟随 kb_id
+    :param usage_ledger: 【v3.22】问答级 token 账本（改写环节的用量记这里）
     :return: (实际用于检索的问题, 精排后的结果列表)
     """
     from services.query_rewriter import rewrite_query
@@ -153,7 +156,9 @@ def _retrieve(question: str, history: list[ChatMessage], kb_id: str, profile: di
 
     profile = profile or get_profile(kb_id)
     question = expand_query_aliases(question)
-    rewritten = rewrite_query(question, history, rewrite_prompt=profile.get("query_rewrite_prompt", ""))
+    rewritten = rewrite_query(question, history,
+                              rewrite_prompt=profile.get("query_rewrite_prompt", ""),
+                              usage_ledger=usage_ledger)
     candidates = hybrid_search(rewritten, kb_id)
     results = rerank(rewritten, candidates)
     return rewritten, results
@@ -206,7 +211,8 @@ _ALT_QUERY_PROMPT = ChatPromptTemplate.from_messages([
 ])
 
 
-def _critic_judge(question: str, results: list[SearchResult]) -> dict:
+def _critic_judge(question: str, results: list[SearchResult],
+                  usage_ledger: dict = None) -> dict:
     """让带思考的模型评估检索资料充分性；任何失败都视为'足够'（不阻塞主流程）"""
     context = "\n".join(
         f"[{i + 1}]（来源：{r.source}，分数{r.score}）{r.content[:200]}"
@@ -215,7 +221,8 @@ def _critic_judge(question: str, results: list[SearchResult]) -> dict:
     try:
         raw = _call_llm_with_retry(_CRITIC_PROMPT,
                                    {"question": question, "context": context},
-                                   model=get_llm_critic())
+                                   model=get_llm_critic(), stage="critic",
+                                   usage_ledger=usage_ledger)
         m = re.search(r"\{.*\}", raw or "", re.DOTALL)
         return json.loads(m.group(0)) if m else {"sufficient": True}
     except Exception as e:
@@ -223,12 +230,14 @@ def _critic_judge(question: str, results: list[SearchResult]) -> dict:
         return {"sufficient": True}
 
 
-def _generate_alternative_query(question: str, rewritten: str, missing: str) -> str | None:
+def _generate_alternative_query(question: str, rewritten: str, missing: str,
+                                usage_ledger: dict = None) -> str | None:
     """生成换角度的替代查询；失败返回 None（调用方结束循环）"""
     try:
         raw = _call_llm_with_retry(_ALT_QUERY_PROMPT,
                                    {"question": question, "rewritten": rewritten, "missing": missing},
-                                   model=get_llm_rewrite())
+                                   model=get_llm_rewrite(), stage="rewrite",
+                                   usage_ledger=usage_ledger)
         alt = (raw or "").strip().splitlines()[0].strip().strip('"')
         return alt or None
     except Exception as e:
@@ -237,7 +246,7 @@ def _generate_alternative_query(question: str, rewritten: str, missing: str) -> 
 
 
 def _critic_refine(question: str, rewritten: str, results: list[SearchResult],
-                   kb_id: str) -> tuple[str, list[SearchResult], list[dict]]:
+                   kb_id: str, usage_ledger: dict = None) -> tuple[str, list[SearchResult], list[dict]]:
     """
     质量自评主流程（在三级检索管线之后、生成之前执行）：
       1. 高分快速通道：top1 ≥ CRITIC_SCORE_HIGH 直接放行（绝大多数问题走这里，零额外延迟）
@@ -265,7 +274,7 @@ def _critic_refine(question: str, rewritten: str, results: list[SearchResult],
             critic_log.append({"iter": i, "action": "skip", "top1": top1})
             break
 
-        verdict = _critic_judge(question, best_r)
+        verdict = _critic_judge(question, best_r, usage_ledger=usage_ledger)
         sufficient = bool(verdict.get("sufficient", True))
         missing = (verdict.get("missing") or "").strip()
         critic_log.append({"iter": i, "action": "judge", "top1": top1,
@@ -275,7 +284,8 @@ def _critic_refine(question: str, rewritten: str, results: list[SearchResult],
         if sufficient:
             break
 
-        alt = _generate_alternative_query(question, best_q, missing or "与问题直接相关的资料")
+        alt = _generate_alternative_query(question, best_q, missing or "与问题直接相关的资料",
+                                          usage_ledger=usage_ledger)
         if not alt or alt == best_q:
             critic_log.append({"iter": i, "action": "no_alt"})
             logger.info("[Critic] 第%d轮未能生成不同的替代查询，结束", i)
@@ -350,19 +360,24 @@ def _llm_error_event(e: Exception) -> dict:
     return {"type": "error", "code": "unavailable", "message": "模型服务暂时不可用，请稍后再试~"}
 
 
-def _call_llm_with_retry(prompt, inputs, max_retry=1, model=None, fallback_used=None):
+def _call_llm_with_retry(prompt, inputs, max_retry=1, model=None, fallback_used=None,
+                         usage_ledger=None, stage="generate", error_code_out=None):
     """大模型调用带重试：失败自动重试，最终失败返回友好提示（真实错误已写入日志）
     【v3.11】重试从 2 次收紧为 1 次、退避固定 1.5s——SDK 自动重试与上层重试叠加
     曾把限流最坏耗时拖到 2 分钟级；现在最多 1.5s 后快速失败。
     【v3.18】主模型重试耗尽且属限流/模型过载类错误时，自动切换 LLM_FALLBACK_MODEL
     兜底模型再试一次（同账号同密钥只换模型名）；连接失败/超时换模型无意义，不切。
     :param model: 指定环节实例（get_llm_rewrite()/get_llm_critic()），默认用最终答案生成实例
-    :param fallback_used: 传空 list 可回收兜底标记（接管成功时 append(True)），供审计打标"""
+    :param fallback_used: 传空 list 可回收兜底标记（接管成功时 append(True)），供审计打标
+    :param usage_ledger: 【v3.22】问答级 token 账本（真实 usage 优先，取不到记估算并标 estimated）
+    :param stage: 记账环节名（generate/rewrite/critic）
+    :param error_code_out: 传空 list 回收最终失败的错误分类码（供审计 error_class 打标）"""
     last_err = None
     for i in range(max_retry + 1):
         try:
             chain = prompt | (model or get_llm())
             response = chain.invoke(inputs)
+            _record_llm_usage(usage_ledger, stage, model, prompt, inputs, response)
             return response.content
         except Exception as e:
             last_err = e
@@ -370,6 +385,9 @@ def _call_llm_with_retry(prompt, inputs, max_retry=1, model=None, fallback_used=
             if i == max_retry:
                 break
             time.sleep(1.5)  # 【v3.11】固定短退避重试一次，再失败立即快速结束（原递增退避 3s/6s）
+
+    if error_code_out is not None:
+        error_code_out.append(_llm_error_event(last_err)["code"] if last_err else "unavailable")
 
     fb_model = LLM_CONFIG.get("fallback_model")
     err_code = _llm_error_event(last_err)["code"] if last_err else None
@@ -381,12 +399,48 @@ def _call_llm_with_retry(prompt, inputs, max_retry=1, model=None, fallback_used=
             if fallback_used is not None:
                 fallback_used.append(True)
             logger.info("[兜底] 备用模型 %s 接管成功", fb_model)
+            _record_llm_usage(usage_ledger, stage, fb_model, prompt, inputs, response)
             return response.content
         except Exception as e2:
             logger.error("[兜底] 备用模型 %s 也失败: %s", fb_model, e2)
     if fallback_used is not None and not fallback_used:
         fallback_used.append(False)  # 【v3.19】主模型与兜底全部失败的标记（调用方据此不缓存该"回答"）
     return "抱歉，当前服务有点忙，请稍后再试~"
+
+
+class _UsageProxy:
+    """【v3.22】流式记账适配：把已拼好的答案与（可能为空的）流式 usage 包装成
+    _record_llm_usage 可识别的响应形态（.content + .response_metadata.token_usage）"""
+
+    def __init__(self, content: str, usage: dict | None):
+        self.content = content
+        self.response_metadata = {"token_usage": usage} if usage else {}
+
+
+def _estimate_prompt_tokens(prompt, question: str) -> int:
+    """【v3.22】按实际渲染的提示词估算 prompt token（含系统提示/参考资料/历史）"""
+    try:
+        msgs = prompt.format_messages(question=question)
+        return estimate_tokens("".join(getattr(m, "content", "") or "" for m in msgs))
+    except Exception:
+        return 0
+
+
+def _record_llm_usage(usage_ledger, stage, model, prompt, inputs, response):
+    """【v3.22】按优先级记账：智谱真实 usage > 按实际渲染提示词与回答长度的估算（标 estimated）
+    :param model: LLM 实例 / 兜底模型名字符串 / None（主模型）"""
+    usage = usage_from_response(response)
+    model_name = model if isinstance(model, str) else (getattr(model, "model_name", None) or "primary")
+    if usage:
+        record_call(usage_ledger, stage, model_name, usage)
+        return
+    try:
+        msgs = prompt.format_messages(**inputs) if isinstance(inputs, dict) else []
+        est_prompt = estimate_tokens("".join(getattr(m, "content", "") or "" for m in msgs))
+    except Exception:
+        est_prompt = 0
+    record_call(usage_ledger, stage, model_name, None,
+                est_prompt=est_prompt, est_completion=estimate_tokens(response.content or ""))
 
 
 def _auto_create_ticket(session_id: str, question: str, rewritten: str,
@@ -407,6 +461,24 @@ def _auto_create_ticket(session_id: str, question: str, rewritten: str,
         return ""
 
 
+# 【v3.22】LLM 错误码 → 审计 error_class 映射（枚举：rate_limit/timeout/empty_answer/
+# generation_error/refusal/none）
+_ERROR_CLASS_MAP = {
+    "rate_limited": "rate_limit",
+    "timeout": "timeout",
+    "server_error": "generation_error",
+    "unavailable": "generation_error",
+}
+
+
+def _audit_retrieval_fields(results: list[SearchResult]) -> dict:
+    """【v3.22】检索类审计字段：top1 重排分数 + 最终召回块数（无检索的路径由调用方传 None）"""
+    return {
+        "rerank_top_score": results[0].score if results else None,
+        "retrieved_count": len(results),
+    }
+
+
 def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple[str, list[dict], list[ChatMessage]]:
     """单轮问答主流程（v3.0 管线），返回 (答案, 来源, 最新历史)。
     v3.6：kb_id 即领域键——领域配置（提示词/兜底话术/关键词规则/改写提示词）运行时跟随 kb_id
@@ -414,12 +486,15 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple
     kb_id = resolve_kb_id(kb_id)
     P = get_profile(kb_id)
     start_time = time.time()
+    usage_ledger: dict = {"entries": []}  # 【v3.22】本次问答全部 LLM 调用的 token 账本
 
     # 1. 敏感词校验
     is_sensitive, filtered_q = filter_sensitive(question)
     if is_sensitive:
         answer = "你的问题包含敏感词，请重新提问~"
-        log_qa(session_id, question, question, [], answer, (time.time() - start_time) * 1000, kb_id, "sensitive_block")
+        log_qa(session_id, question, question, [], answer, (time.time() - start_time) * 1000,
+               kb_id, "sensitive_block", error_class="refusal",
+               token_usage=summarize_usage(usage_ledger))
         return answer, [], load_history(session_id)
 
     # 2. 自定义关键词规则优先（随领域）
@@ -448,30 +523,44 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple
         answer, sources = cached["answer"], cached["sources"]
         history = append_history(session_id, question, answer)
         log_qa(session_id, question, question_for_prompt, sources, answer,
-               (time.time() - start_time) * 1000, kb_id, "cache_hit")
+               (time.time() - start_time) * 1000, kb_id, "cache_hit",
+               token_usage=summarize_usage(usage_ledger))
         return answer, sources, history
 
     # 4~6. 三级检索管线：改写 → 混合召回 → 重排（+ v3.3 质量自评 Critic）
-    rewritten, results = _retrieve(question_for_prompt, history, kb_id, profile=P)
-    rewritten, results, critic_log = _critic_refine(question_for_prompt, rewritten, results, kb_id)
+    rewritten, results = _retrieve(question_for_prompt, history, kb_id, profile=P,
+                                   usage_ledger=usage_ledger)
+    rewritten, results, critic_log = _critic_refine(question_for_prompt, rewritten, results, kb_id,
+                                                    usage_ledger=usage_ledger)
     pipeline_desc = ("hybrid+rerank" if RAG_CONFIG.get("enable_rerank") else "hybrid") \
         if RAG_CONFIG.get("enable_hybrid_search") else "vector"
     retries = sum(1 for c in critic_log if c.get("action") == "retry")
     if retries:
         pipeline_desc += f"+critic{retries}"
+    retrieval_fields = _audit_retrieval_fields(results)  # 【v3.22】top1 分数 + 召回块数
 
     # 7. 低置信兜底（v3.5：自动生成人工工单，闭环入口；兜底话术随领域）
     fallback_flag = []
+    error_class = "none"
     if _should_fallback(results):
         answer = P["fallback_answer"] + _auto_create_ticket(session_id, question, rewritten, results, kb_id)
         sources = []
+        error_class = "refusal"
     else:
         # 8. 拼提示词（加拒答规则），带重试调用大模型（【v3.18】限流自动切兜底模型）
         prompt = _build_rag_messages(history, results, question_for_prompt, profile=P)
+        err_codes = []
         answer = _call_llm_with_retry(prompt, {"question": question_for_prompt},
-                                      fallback_used=fallback_flag)
+                                      fallback_used=fallback_flag,
+                                      usage_ledger=usage_ledger, stage="generate",
+                                      error_code_out=err_codes)
         if fallback_flag:
             pipeline_desc += "+fallback"
+        if fallback_flag == [False]:
+            # 【v3.22】主模型+兜底全部失败：返回的是 canned 文案，审计如实标失败类
+            error_class = _ERROR_CLASS_MAP.get(err_codes[0] if err_codes else "", "generation_error")
+        elif not (answer or "").strip():
+            error_class = "empty_answer"
         sources = _build_sources(results)
 
     # 8.5 生成成功才写缓存：主模型或兜底模型给出的有效回答可缓存；
@@ -482,7 +571,11 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple
     # 9. 更新历史（持锁）+ 审计留痕
     history = append_history(session_id, question, answer)
     log_qa(session_id, question, rewritten, sources, answer,
-           (time.time() - start_time) * 1000, kb_id, pipeline_desc)
+           (time.time() - start_time) * 1000, kb_id, pipeline_desc,
+           error_class=error_class,
+           rerank_top_score=retrieval_fields["rerank_top_score"],
+           retrieved_count=retrieval_fields["retrieved_count"],
+           token_usage=summarize_usage(usage_ledger))
     return answer, sources, history
 
 
@@ -510,6 +603,10 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
     rewritten = question     # 审计字段兜底（断连发生在改写完成前时用原问题）
     finalized = False        # 主流程已完成"保存历史+审计"（防 finally 重复落账）
     abort_save = False       # LLM 失败路径显式不保存（维持 v3.10 行为）
+    # ---- 【v3.22】可观测性状态 ----
+    usage_ledger: dict = {"entries": []}  # 本次问答全部 LLM 调用的 token 账本
+    retrieval_fields = {"rerank_top_score": None, "retrieved_count": None}
+    error_class = "none"
 
     try:
         # 敏感词 / 关键词规则 / 兜底：这些场景没有流式生成过程，一次性给出
@@ -558,15 +655,19 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
             yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in history]}
             return
 
-        rewritten, results = _retrieve(question_for_prompt, history, kb_id, profile=P)
-        rewritten, results, _critic_log = _critic_refine(question_for_prompt, rewritten, results, kb_id)
+        rewritten, results = _retrieve(question_for_prompt, history, kb_id, profile=P,
+                                       usage_ledger=usage_ledger)
+        rewritten, results, _critic_log = _critic_refine(question_for_prompt, rewritten, results, kb_id,
+                                                         usage_ledger=usage_ledger)
         pipeline_desc = ("hybrid+rerank" if RAG_CONFIG.get("enable_rerank") else "hybrid") \
             if RAG_CONFIG.get("enable_hybrid_search") else "vector"
+        retrieval_fields = _audit_retrieval_fields(results)  # 【v3.22】top1 分数 + 召回块数
 
         if _should_fallback(results):
             sources = []
             yield {"type": "sources", "sources": sources}
             answer = P["fallback_answer"] + _auto_create_ticket(session_id, question, rewritten, results, kb_id)
+            error_class = "refusal"
             for ch in answer:
                 yield {"type": "token", "delta": ch}
         else:
@@ -574,18 +675,33 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
             yield {"type": "sources", "sources": sources}
             prompt = _build_rag_messages(history, results, question_for_prompt, profile=P)
             chain = prompt | get_llm()
+            stream_usage = None  # 【v3.22】最后分片的真实 usage（兼容端点通常不带，则走估算）
             try:
                 for chunk in chain.stream({"question": question_for_prompt}):
+                    tu = (getattr(chunk, "response_metadata", None) or {}).get("token_usage") or {}
+                    if tu.get("total_tokens"):
+                        stream_usage = {
+                            "prompt_tokens": int(tu.get("prompt_tokens") or 0),
+                            "completion_tokens": int(tu.get("completion_tokens") or 0),
+                            "total_tokens": int(tu.get("total_tokens") or 0),
+                        }
                     delta = chunk.content or ""
                     if delta:
                         parts.append(delta)
                         yield {"type": "token", "delta": delta}
                 answer = "".join(parts)
+                _record_llm_usage(usage_ledger, "generate", "primary", prompt,
+                                  {"question": question_for_prompt},
+                                  _UsageProxy(answer, stream_usage))
             except Exception as e:
                 # v3.10：LLM 生成失败（429/5xx/超时/连接失败）不再把"抱歉"文案伪装成回答，
                 # 改推结构化 error 事件让前端停止 loading 并显示错误气泡，杜绝无限转圈
                 logger.error("流式大模型调用失败: %s", e)
                 error_event = _llm_error_event(e)
+                # 【v3.22】失败调用也记账（已产出部分按估算，诚实入账）
+                record_call(usage_ledger, "generate", "primary", None,
+                            est_prompt=_estimate_prompt_tokens(prompt, question_for_prompt),
+                            est_completion=estimate_tokens("".join(parts)))
                 # 【v3.18】尚未产出任何 token 且属限流/模型过载类错误 → 备用模型重新流式生成；
                 # 已有部分 token 时换模型续写会前后不一致，维持 error 事件收尾
                 fb_model = LLM_CONFIG.get("fallback_model")
@@ -594,25 +710,43 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
                     try:
                         chain = prompt | get_llm_fallback()
                         for chunk in chain.stream({"question": question_for_prompt}):
+                            tu = (getattr(chunk, "response_metadata", None) or {}).get("token_usage") or {}
+                            if tu.get("total_tokens"):
+                                stream_usage = {
+                                    "prompt_tokens": int(tu.get("prompt_tokens") or 0),
+                                    "completion_tokens": int(tu.get("completion_tokens") or 0),
+                                    "total_tokens": int(tu.get("total_tokens") or 0),
+                                }
                             delta = chunk.content or ""
                             if delta:
                                 parts.append(delta)
                                 yield {"type": "token", "delta": delta}
                         answer = "".join(parts)
                         pipeline_desc += "+fallback"
+                        record_call(usage_ledger, "generate", fb_model, stream_usage,
+                                    est_prompt=_estimate_prompt_tokens(prompt, question_for_prompt),
+                                    est_completion=estimate_tokens(answer))
                     except Exception as e2:
                         logger.error("[兜底] 备用模型 %s 也失败: %s", fb_model, e2)
                         error_event = _llm_error_event(e2)
                         log_qa(session_id, question, rewritten, sources,
                                f"[生成失败:{error_event['code']}] {error_event['message']}",
-                               (time.time() - start_time) * 1000, kb_id, pipeline_desc + "+llm_error")
+                               (time.time() - start_time) * 1000, kb_id, pipeline_desc + "+llm_error",
+                               error_class=_ERROR_CLASS_MAP.get(error_event["code"], "generation_error"),
+                               rerank_top_score=retrieval_fields["rerank_top_score"],
+                               retrieved_count=retrieval_fields["retrieved_count"],
+                               token_usage=summarize_usage(usage_ledger))
                         abort_save = True  # 失败路径不把残缺内容落历史（v3.10 行为）
                         yield error_event
                         return
                 else:
                     log_qa(session_id, question, rewritten, sources,
                            f"[生成失败:{error_event['code']}] {error_event['message']}",
-                           (time.time() - start_time) * 1000, kb_id, pipeline_desc + "+llm_error")
+                           (time.time() - start_time) * 1000, kb_id, pipeline_desc + "+llm_error",
+                           error_class=_ERROR_CLASS_MAP.get(error_event["code"], "generation_error"),
+                           rerank_top_score=retrieval_fields["rerank_top_score"],
+                           retrieved_count=retrieval_fields["retrieved_count"],
+                           token_usage=summarize_usage(usage_ledger))
                     abort_save = True  # 失败路径不把残缺内容落历史（v3.10 行为）
                     yield error_event
                     return
@@ -622,7 +756,11 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
             cache.put(question_for_prompt, kb_id, answer, sources)
         history = append_history(session_id, question, answer)
         log_qa(session_id, question, rewritten, sources, answer,
-               (time.time() - start_time) * 1000, kb_id, pipeline_desc)
+               (time.time() - start_time) * 1000, kb_id, pipeline_desc,
+               error_class=error_class,
+               rerank_top_score=retrieval_fields["rerank_top_score"],
+               retrieved_count=retrieval_fields["retrieved_count"],
+               token_usage=summarize_usage(usage_ledger))
         finalized = True
         yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in history]}
     finally:
@@ -634,7 +772,11 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
             try:
                 append_history(session_id, question, final_answer)
                 log_qa(session_id, question, rewritten, sources, final_answer,
-                       (time.time() - start_time) * 1000, kb_id, pipeline_desc + "+disconnect")
+                       (time.time() - start_time) * 1000, kb_id, pipeline_desc + "+disconnect",
+                       error_class=error_class,
+                       rerank_top_score=retrieval_fields["rerank_top_score"],
+                       retrieved_count=retrieval_fields["retrieved_count"],
+                       token_usage=summarize_usage(usage_ledger))
             except Exception as e:
                 logger.warning("[断连兜底] 补保存历史/审计失败(不影响流收尾): %s", e)
 

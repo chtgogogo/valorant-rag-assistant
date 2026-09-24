@@ -150,9 +150,10 @@ class TestSseDisconnect:
         monkeypatch.setattr(cs, "replace_aliases_with_official", lambda q: q)
         monkeypatch.setitem(cs.CACHE_CONFIG, "enabled", False)
         results = [SearchResult(content="资料", source="s.md", score=0.9, doc_id="d1")]
-        monkeypatch.setattr(cs, "_retrieve", lambda q, h, kb, profile=None: (q, results))
+        monkeypatch.setattr(cs, "_retrieve",
+                            lambda q, h, kb, profile=None, usage_ledger=None: (q, results))
         monkeypatch.setattr(cs, "_critic_refine",
-                            lambda q, rw, rs, kb: (rw, rs, []))
+                            lambda q, rw, rs, kb, usage_ledger=None: (rw, rs, []))
 
         class FakeChain:
             def stream(self, _):
