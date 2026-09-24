@@ -295,10 +295,12 @@ def _critic_refine(question: str, rewritten: str, results: list[SearchResult],
 def _build_sources(results: list[SearchResult]) -> list[dict]:
     results = _dedupe_results(results)
     return [
-        {"name": r.source, "id": r.doc_id, "score": r.score}
+        {"name": r.source, "id": r.doc_id, "score": r.score,
+         **({"version": r.version} if r.version is not None else {})}
         for r in results
     ] if RAG_CONFIG.get("enable_source_score", True) else [
-        {"name": r.source, "id": r.doc_id}
+        {"name": r.source, "id": r.doc_id,
+         **({"version": r.version} if r.version is not None else {})}
         for r in results
     ]
 

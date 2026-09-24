@@ -1,6 +1,9 @@
 # 文档解析/切分逻辑
+import logging
 import os
 import json
+import tempfile
+import threading
 import time
 import uuid
 from docx import Document as DocxDocument
@@ -11,8 +14,25 @@ from schemas.models import DocumentChunk
 from services.vector_service import add_chunks, delete_doc_vectors
 from services.semantic_cache import touch_kb_epoch
 
+logger = logging.getLogger(__name__)
 
 # -------------------------- 文档元数据管理（用 JSON 文件存储） --------------------------
+# 【v3.21】注册表三防：
+#   ① 原子写——写临时文件再 os.replace，写一半崩溃不会留下损坏的半截 JSON；
+#   ② per-kb 文件锁——并发上传的 load→append→save 全程持锁，不再互相覆盖丢记录；
+#   ③ 损坏自愈留痕——读损坏文件时记 error 日志 + 备份坏文件，绝不无声无息当空
+#     （旧行为 except 后静默返回 []，知识库会"凭空消失"且无从排查）。
+
+_doc_list_locks: dict = {}
+_locks_guard = threading.Lock()
+
+
+def _get_doc_list_lock(kb_id: str) -> threading.Lock:
+    with _locks_guard:
+        if kb_id not in _doc_list_locks:
+            _doc_list_locks[kb_id] = threading.Lock()
+        return _doc_list_locks[kb_id]
+
 
 def _get_doc_list_path(kb_id: str) -> str:
     """获取知识库的文档列表 JSON 路径"""
@@ -20,22 +40,52 @@ def _get_doc_list_path(kb_id: str) -> str:
 
 
 def _load_doc_list(kb_id: str) -> list:
-    """加载文档列表"""
+    """加载文档列表（损坏 → error 日志 + 备份坏文件后自愈为空）"""
     path = _get_doc_list_path(kb_id)
     if not os.path.exists(path):
         return []
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except json.JSONDecodeError as e:
+        backup = f"{path}.corrupt-{time.strftime('%Y%m%d_%H%M%S')}"
+        try:
+            os.replace(path, backup)
+        except OSError:
+            backup = "(备份失败)"
+        logger.error("文档注册表损坏 kb=%s: %s；坏文件已备份至 %s，本次按空注册表继续（自愈）",
+                     kb_id, e, backup)
+        return []
+    except OSError as e:
+        logger.error("文档注册表读取失败 kb=%s: %s（按空注册表继续）", kb_id, e)
         return []
 
 
 def _save_doc_list(kb_id: str, doc_list: list):
-    """保存文档列表"""
+    """保存文档列表（原子写：临时文件 + os.replace，永不留半截文件）"""
     path = _get_doc_list_path(kb_id)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(doc_list, f, ensure_ascii=False, indent=2)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(doc_list, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def _append_doc_record(kb_id: str, record: dict):
+    """持 per-kb 锁追加一条文档记录（load→append→save 原子化，并发上传互不覆盖）"""
+    with _get_doc_list_lock(kb_id):
+        doc_list = _load_doc_list(kb_id)
+        doc_list.append(record)
+        _save_doc_list(kb_id, doc_list)
 
 
 # -------------------------- 文档解析 --------------------------
@@ -146,6 +196,13 @@ def upload_and_process(file_path: str, filename: str, kb_id: str = "valorant") -
     doc_id = f"doc_{uuid.uuid4().hex[:12]}"
     upload_time = time.strftime("%Y-%m-%d %H:%M:%S")
 
+    # 【v3.21】同名文档重复上传 version 递增：读注册表定版本号（此刻就定，
+    # 以便 version 随块 metadata 写入向量库，检索结果与 sources 均可透传）
+    with _get_doc_list_lock(kb_id):
+        doc_list = _load_doc_list(kb_id)
+        same_name = [d for d in doc_list if d.get("doc_name") == filename]
+        version = max((int(d.get("version") or 1) for d in same_name), default=0) + 1
+
     chunks = []
     for text_block in chunks_text:
         chunks.append(DocumentChunk(
@@ -153,7 +210,8 @@ def upload_and_process(file_path: str, filename: str, kb_id: str = "valorant") -
             metadata={
                 "doc_id": doc_id,
                 "doc_name": filename,
-                "kb_id": kb_id
+                "kb_id": kb_id,
+                "version": version
             }
         ))
 
@@ -162,15 +220,15 @@ def upload_and_process(file_path: str, filename: str, kb_id: str = "valorant") -
     if not success:
         raise ValueError("向量入库失败，请检查向量引擎是否正常")
 
-    # 6. 记录文档元数据
-    doc_list = _load_doc_list(kb_id)
-    doc_list.append({
+    # 6. 记录文档元数据（【v3.21】持锁追加：并发上传互不覆盖；记录带 version 与 updated_at）
+    _append_doc_record(kb_id, {
         "doc_id": doc_id,
         "doc_name": filename,
         "upload_time": upload_time,
-        "chunk_count": len(chunks)
+        "chunk_count": len(chunks),
+        "version": version,
+        "updated_at": upload_time,
     })
-    _save_doc_list(kb_id, doc_list)
 
     # 【v3.19】知识库内容变更：touch epoch 信号让语义缓存自动失效
     touch_kb_epoch()
@@ -195,18 +253,19 @@ def delete_document(doc_id: str, kb_id: str = "valorant") -> bool:
     # 1. 删除向量库中的数据
     delete_doc_vectors(doc_id, kb_id)
 
-    # 2. 从文档列表中删除记录
-    doc_list = _load_doc_list(kb_id)
-    target = None
-    new_list = []
-    for doc in doc_list:
-        if doc["doc_id"] == doc_id:
-            target = doc
-        else:
-            new_list.append(doc)
+    # 2. 从文档列表中删除记录（【v3.21】持锁读改写，防与并发上传互相覆盖）
+    with _get_doc_list_lock(kb_id):
+        doc_list = _load_doc_list(kb_id)
+        target = None
+        new_list = []
+        for doc in doc_list:
+            if doc["doc_id"] == doc_id:
+                target = doc
+            else:
+                new_list.append(doc)
 
-    if target:
-        _save_doc_list(kb_id, new_list)
+        if target:
+            _save_doc_list(kb_id, new_list)
         # 3. 删除原始上传文件
         # doc_name 来自注册表（源头是历史客户端文件名），删除前必须校验仍在上传目录内，
         # 防历史脏数据（如 ../../x.md）借删除接口删掉任意文件

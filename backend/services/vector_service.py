@@ -137,7 +137,8 @@ def search_vector(question: str, kb_id: str = "valorant", top_k: int = 3) -> lis
                     content=doc,
                     source=metadata.get("doc_name", "未知文档"),
                     score=round(score, 4),
-                    doc_id=metadata.get("doc_id", "unknown")
+                    doc_id=metadata.get("doc_id", "unknown"),
+                    version=metadata.get("version")  # 【v3.21】文档版本随块 metadata 透传
                 ))
 
         return search_results
