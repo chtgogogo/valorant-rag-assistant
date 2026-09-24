@@ -135,6 +135,18 @@ RAG_CONFIG = {
 }
 
 # ------------------------------------------------------
+# 5.1.1 语义缓存配置（v3.19）：相似问题命中缓存直接复用答案，
+#       跳过 改写→混合检索→重排→大模型生成 全程；知识库内容变更自动失效
+# ------------------------------------------------------
+CACHE_CONFIG = {
+    "enabled": os.getenv("RAG_SEMANTIC_CACHE", "1") == "1",
+    "threshold": float(os.getenv("RAG_CACHE_THRESHOLD", "0.92")),   # 余弦相似度≥此值才命中（保守，宁漏勿错）
+    "ttl_minutes": int(os.getenv("RAG_CACHE_TTL_MINUTES", "1440")), # 条目有效期（默认 24h）
+    "max_entries": int(os.getenv("RAG_CACHE_MAX", "512")),          # 每知识库最大缓存条数（FIFO 淘汰）
+    "epoch_path": str(DATA_DIR / "kb_epoch"),                       # 知识库变更标记文件（mtime 变化即全量失效）
+}
+
+# ------------------------------------------------------
 # 5.2 认证配置（企业化预留：默认关闭，开了才校验）
 # ------------------------------------------------------
 AUTH_ENABLED = os.getenv("AUTH_ENABLED", "0") == "1"

@@ -8,13 +8,14 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from config.settings import (
     LLM_CONFIG, SYSTEM_PROMPT, CHAT_CONFIG, RAG_CONFIG,
     FALLBACK_ANSWER, REFUSE_ANSWER, CUSTOM_RULES, DEFAULT_KB_ID, TICKET_CONFIG,
-    get_profile,
+    get_profile, CACHE_CONFIG,
 )
 from schemas.models import ChatMessage, SearchResult
 from utils.sensitive import filter_sensitive
 from utils.audit import log_qa
 from services.official_data_service import answer_official_data_query, expand_query_aliases, replace_aliases_with_official
 from services.llm_factory import make_llm
+from services.semantic_cache import get_semantic_cache
 
 import logging
 logging.basicConfig(
@@ -369,6 +370,8 @@ def _call_llm_with_retry(prompt, inputs, max_retry=1, model=None, fallback_used=
             return response.content
         except Exception as e2:
             logger.error("[兜底] 备用模型 %s 也失败: %s", fb_model, e2)
+    if fallback_used is not None and not fallback_used:
+        fallback_used.append(False)  # 【v3.19】主模型与兜底全部失败的标记（调用方据此不缓存该"回答"）
     return "抱歉，当前服务有点忙，请稍后再试~"
 
 
@@ -422,6 +425,17 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple
     # 3. 加载历史
     history = load_history(session_id)
 
+    # 3.5 语义缓存（v3.19）：相似问题命中直接复用答案，跳过 改写→检索→重排→生成 全程；
+    # 只缓存"带来源的成功回答"，兜底/失败回答不入缓存；知识库变更经 epoch 信号自动失效
+    cache = get_semantic_cache() if CACHE_CONFIG["enabled"] else None
+    cached = cache.lookup(question_for_prompt, kb_id) if cache else None
+    if cached:
+        answer, sources = cached["answer"], cached["sources"]
+        history = append_history(session_id, question, answer)
+        log_qa(session_id, question, question_for_prompt, sources, answer,
+               (time.time() - start_time) * 1000, kb_id, "cache_hit")
+        return answer, sources, history
+
     # 4~6. 三级检索管线：改写 → 混合召回 → 重排（+ v3.3 质量自评 Critic）
     rewritten, results = _retrieve(question_for_prompt, history, kb_id, profile=P)
     rewritten, results, critic_log = _critic_refine(question_for_prompt, rewritten, results, kb_id)
@@ -432,18 +446,23 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple
         pipeline_desc += f"+critic{retries}"
 
     # 7. 低置信兜底（v3.5：自动生成人工工单，闭环入口；兜底话术随领域）
+    fallback_flag = []
     if _should_fallback(results):
         answer = P["fallback_answer"] + _auto_create_ticket(session_id, question, rewritten, results, kb_id)
         sources = []
     else:
         # 8. 拼提示词（加拒答规则），带重试调用大模型（【v3.18】限流自动切兜底模型）
         prompt = _build_rag_messages(history, results, question_for_prompt, profile=P)
-        fallback_flag = []
         answer = _call_llm_with_retry(prompt, {"question": question_for_prompt},
                                       fallback_used=fallback_flag)
         if fallback_flag:
             pipeline_desc += "+fallback"
         sources = _build_sources(results)
+
+    # 8.5 生成成功才写缓存：主模型或兜底模型给出的有效回答可缓存；
+    # 全部失败（fallback_flag=[False]，返回 canned 文案）与低置信兜底（sources=[]）不入缓存
+    if cache and fallback_flag != [False]:
+        cache.put(question_for_prompt, kb_id, answer, sources)
 
     # 9. 更新历史（持锁）+ 审计留痕
     history = append_history(session_id, question, answer)
@@ -490,6 +509,20 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
 
     question_for_prompt = replace_aliases_with_official(question)
     history = load_history(session_id)
+
+    # 语义缓存（v3.19）：命中直接推来源+答案，毫秒级返回（跳过检索与生成全程）
+    cache = get_semantic_cache() if CACHE_CONFIG["enabled"] else None
+    cached = cache.lookup(question_for_prompt, kb_id) if cache else None
+    if cached:
+        answer, sources = cached["answer"], cached["sources"]
+        yield {"type": "sources", "sources": sources}
+        yield {"type": "token", "delta": answer}
+        history = append_history(session_id, question, answer)
+        log_qa(session_id, question, question_for_prompt, sources, answer,
+               (time.time() - start_time) * 1000, kb_id, "cache_hit")
+        yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in history]}
+        return
+
     rewritten, results = _retrieve(question_for_prompt, history, kb_id, profile=P)
     rewritten, results, _critic_log = _critic_refine(question_for_prompt, rewritten, results, kb_id)
     pipeline_desc = ("hybrid+rerank" if RAG_CONFIG.get("enable_rerank") else "hybrid") \
@@ -548,6 +581,9 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
                 yield error_event
                 return  # 错误后正常结束流：不发残缺答案，也不把失败文案写进对话历史
 
+    # 生成成功（未被错误分支提前 return）才写缓存；兜底回答 sources=[] 会被 put 内部忽略
+    if cache:
+        cache.put(question_for_prompt, kb_id, answer, sources)
     history = append_history(session_id, question, answer)
     log_qa(session_id, question, rewritten, sources, answer,
            (time.time() - start_time) * 1000, kb_id, pipeline_desc)

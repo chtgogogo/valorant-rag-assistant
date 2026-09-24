@@ -9,6 +9,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from config.settings import UPLOAD_PATH, ALLOWED_EXTENSIONS, RAG_CONFIG
 from schemas.models import DocumentChunk
 from services.vector_service import add_chunks, delete_doc_vectors
+from services.semantic_cache import touch_kb_epoch
 
 
 # -------------------------- 文档元数据管理（用 JSON 文件存储） --------------------------
@@ -171,6 +172,9 @@ def upload_and_process(file_path: str, filename: str, kb_id: str = "valorant") -
     })
     _save_doc_list(kb_id, doc_list)
 
+    # 【v3.19】知识库内容变更：touch epoch 信号让语义缓存自动失效
+    touch_kb_epoch()
+
     print(f"[文档管理] 文档 [{filename}] 处理完成，切分为 {len(chunks)} 块，已入库")
     return chunks
 
@@ -214,4 +218,6 @@ def delete_document(doc_id: str, kb_id: str = "valorant") -> bool:
         else:
             print(f"[文档管理] 拒绝删除上传目录外的路径: {target['doc_name']}")
         print(f"[文档管理] 文档 [{target['doc_name']}] 已删除")
+    # 【v3.19】知识库内容变更：touch epoch 信号让语义缓存自动失效（无论是否命中记录，内容已变）
+    touch_kb_epoch()
     return True

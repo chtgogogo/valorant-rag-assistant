@@ -75,6 +75,9 @@ def main():
         except Exception as e:
             print(f" 失败: {e}")
     print(f"\n全部完成，共 {len(md_files)} 份文档，{total_chunks} 个文本块。知识库ID: {domain}")
+    # 【v3.19】离线重建会改动知识库内容：touch epoch 信号让运行中服务的语义缓存自动失效
+    from services.semantic_cache import touch_kb_epoch
+    touch_kb_epoch()
     print(f"启动该领域服务: set APP_DOMAIN={domain} 后运行 main.py")
 
 
