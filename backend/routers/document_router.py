@@ -4,13 +4,14 @@ import os
 import re
 from fastapi import APIRouter, UploadFile, File, Query
 from schemas.models import ApiResponse
-from config.settings import UPLOAD_PATH, ALLOWED_EXTENSIONS, MAX_FILE_SIZE
+from config.settings import UPLOAD_PATH, ALLOWED_EXTENSIONS, MAX_FILE_SIZE, KB_ID_RE
 from services.document_service import upload_and_process, list_documents, delete_document
 
 doc_router = APIRouter()
 
 # kb_id 会拼进 doc_list_{kb_id}.json 注册表路径，必须白名单校验，防路径穿越
-_KB_ID_RE = re.compile(r"^[\w\-]{1,64}$")
+# 【v3.20】正则收敛到 settings.KB_ID_RE（chat/vector/document 三链路单一事实源）
+_KB_ID_RE = KB_ID_RE
 
 
 def _check_kb_id(kb_id: str) -> None:

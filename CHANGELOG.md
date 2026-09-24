@@ -5,6 +5,48 @@
 
 ---
 
+## v3.20（2026-09-25）· 安全漏洞清零：session_id/kb_id 白名单 + 鉴权 fail-closed + SSE 断连兜底
+
+**优化了哪些地方**
+1. **session_id 白名单**（`services/chat_service.py`）：`_get_history_path` 入口统一校验
+   （规则与 kb_id 白名单同款：字母/数字/下划线/连字符，1~64 位），非法值抛 HTTP 400；
+   读历史/清空/回滚三个入口全部被覆盖（都经过该函数）；`schemas/models.py` 的
+   `ChatRequest.session_id` 加 pydantic `pattern` 约束做双保险（模型层 422 拒绝）。
+2. **kb_id 全链路白名单**：校验正则收敛到 `config.settings.KB_ID_RE` 单一事实源；
+   新增 `resolve_kb_id()` 唯一入口——格式非法 → 400，格式合法但未配置 → 404。
+   `chat_router`（send/stream/warmup）与 `vector_router`（add_chunks/search/stats/delete_doc）
+   全部接入；`get_profile` 未知 kb_id 改抛 404；`chat_service` 两条问答链路入口同步接入，
+   残留的 `kb_id or DEFAULT_KB_ID` 静默回退移除。
+3. **鉴权加固**（`utils/auth.py`）：key 比较从普通字符串 `in` 改为 `hmac.compare_digest`
+   常量时间比较（防时序侧信道逐位猜 key）；`AUTH_ENABLED` 判定收敛到
+   `settings.compute_auth_enabled()` 单点——生产模式（`APP_ENV=production`）强制开启
+   fail-closed，认证开启但 `API_KEYS` 未配置时所有请求 401（宁全拒不裸奔）；
+   本地开发默认体验不变；`.env.example` 补注释说明。
+4. **SSE 断连兜底**（`chat_single_turn_stream`）：生成器整体包 try/finally——客户端中途
+   断开（GeneratorExit）时，已产出的答案仍补保存历史 + 写审计（pipeline 标 `+disconnect`）；
+   敏感词/关键词规则/官方直答/缓存命中/正常完成各路径以 finalized 标志防重复落账；
+   LLM 失败路径维持 v3.10 行为（不发残缺答案、不写历史）；断连不刷错误日志。
+5. **加载期 OOM 降级修复**（`services/device_manager.py`）：`degrade_to_cpu` 判 None——
+   加载期（模型实例还没建出来）触发 OOM 时 `vector_service`/`reranker` 传的是 None，
+   旧代码直接 AttributeError 导致降级失效。
+6. **密钥字样彻底清除**：全仓跟踪文件不再残留旧密钥前缀字样（历史勘误行已改写）；
+   `.env` 不入库不用管（密钥早已轮换）。
+
+**新增了什么**
+- 新增 `backend/tests/test_security_v320.py` 安全回归测试 27 条：session_id 穿越矩阵
+  （`../`/`..\`/空/超长/None + 三入口拦截 + 正常 id 不受影响）、kb_id 非法/未知矩阵、
+  鉴权常量时间比较与生产强制开启、SSE 断连兜底（断连补保存 + 无答案不保存 + 正常完成不重复落账）、
+  degrade_to_cpu(None) 判空。
+
+**解决了什么问题**
+- `session_id=../../x` 可读/写/清任意 json 文件、可枚举 web_时间戳越权读他人对话（L1 级漏洞闭合）。
+- chat/vector 链路传未知 kb_id 静默回退默认领域——用户问 A 库答 B 库还毫无感知；现在明确 404。
+- 鉴权开启时普通字符串比较可被时序攻击逐位猜 key；生产环境忘开 AUTH_ENABLED 会裸奔——现已强制开启。
+- 客户端中途断开 SSE 时，保存历史/写审计/低置信建单全部不执行——断开也留痕，审计不再漏记。
+- 加载期 OOM 降级因 None 崩溃而失效——现在安全跳过，加载失败按原有异常路径正常暴露。
+
+---
+
 ## v3.19（2026-09-24）· 语义缓存 + 付费主模型：命中毫秒级返回
 
 **做了什么**
@@ -192,7 +234,8 @@
 2. **安检报告勘误（docs/pipeline/安检报告.md，4 处）**：删除对不存在提交号 `dbaf112` 的
    三处引用（初版笔误，`git cat-file` 证实对象不存在）；"轮换已核实"改回诚实的
    "待平台核实"（与正文"判定为未知"自洽）；删除"无需重写历史"表述（2026-09-23 历史已
-   整体重写并 force-push，表述失效）；补删 key 前缀 `9bd5c4…` 残留（此前"记录全删"的漏网项）。
+   整体重写并 force-push，表述失效）；补删旧 key 前缀残留（此前"记录全删"的漏网项，
+   【v3.20】起全仓不再出现任何真实密钥片段字样）。
 3. **代码注释残迹清理**：5 个文件 8 处"分工N写"式注释改为中性描述（document_router /
    vector_router / document_service / vector_service / schemas/models.py）。
 

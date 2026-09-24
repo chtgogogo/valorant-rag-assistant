@@ -1,7 +1,9 @@
 import os
+import re
 import yaml
 from pathlib import Path
 from dotenv import load_dotenv
+from fastapi import HTTPException
 
 # 项目根目录 / 后端根目录 / 数据目录（统一绝对路径，避免从不同目录启动导致数据不一致）
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -35,10 +37,42 @@ _PROFILE_PATH = _PROFILES_DIR / f"{DOMAIN}.yaml"  # 兼容旧引用（仅路径�
 
 
 def get_profile(kb_id: str = None) -> dict:
-    """运行时按知识库ID取领域配置（kb_id 与领域同名）；未知 kb_id 回退默认领域"""
-    if kb_id and kb_id in DOMAIN_PROFILES:
+    """运行时按知识库ID取领域配置（kb_id 与领域同名）。
+    【v3.20】kb_id=None 回退默认领域（内部旧调用路径兼容）；显式传入但未配置的
+    kb_id 抛 404——不再静默回退默认领域（静默回退会掩盖客户端传错参数）"""
+    if kb_id is None:
+        return DOMAIN_PROFILE
+    if kb_id in DOMAIN_PROFILES:
         return DOMAIN_PROFILES[kb_id]
-    return DOMAIN_PROFILE
+    raise HTTPException(
+        status_code=404,
+        detail=f"知识库 '{kb_id}' 不存在，可用知识库: {sorted(DOMAIN_PROFILES)}")
+
+
+# ------------------------------------------------------
+# 【v3.20】kb_id 白名单校验（单一事实源）：kb_id 会拼进文件/集合名
+# （doc_list_{kb_id}.json、chroma collection、会话文件等），必须白名单约束。
+# chat / vector / document 三个 router 与 chat_service 全部走 resolve_kb_id。
+# ------------------------------------------------------
+KB_ID_RE = re.compile(r"^[\w\-]{1,64}$")
+
+
+def resolve_kb_id(kb_id: str | None) -> str:
+    """kb_id 校验+解析唯一入口：
+    - None → 默认领域（不传 kb_id 的旧调用路径兼容）
+    - 格式非法（空白/超长/路径字符）→ HTTP 400
+    - 格式合法但未配置 → HTTP 404（不再静默回退默认领域）
+    """
+    if kb_id is None:
+        return DEFAULT_KB_ID
+    kb = str(kb_id)
+    if not KB_ID_RE.match(kb):
+        raise HTTPException(status_code=400, detail="非法知识库 ID")
+    if kb not in DOMAIN_PROFILES:
+        raise HTTPException(
+            status_code=404,
+            detail=f"知识库 '{kb}' 不存在，可用知识库: {sorted(DOMAIN_PROFILES)}")
+    return kb
 
 # ------------------------------------------------------
 # 1. 大模型配置（从 .env 读取密钥，绝不硬编码）
@@ -148,8 +182,18 @@ CACHE_CONFIG = {
 
 # ------------------------------------------------------
 # 5.2 认证配置（企业化预留：默认关闭，开了才校验）
+#     【v3.20】AUTH_ENABLED 判定收敛到 compute_auth_enabled 单点：
+#     显式 AUTH_ENABLED=1 永远开启；生产模式（APP_ENV=production）强制开启
+#     fail-closed——即使运维忘了设 AUTH_ENABLED，生产环境也不会裸奔。
+#     生产模式 + API_KEYS 为空时 verify_api_key 对所有请求返回 401（宁全拒不裸奔）。
 # ------------------------------------------------------
-AUTH_ENABLED = os.getenv("AUTH_ENABLED", "0") == "1"
+def compute_auth_enabled() -> bool:
+    if os.getenv("AUTH_ENABLED", "0") == "1":
+        return True
+    return os.getenv("APP_ENV", "development").strip().lower() == "production"
+
+
+AUTH_ENABLED = compute_auth_enabled()
 API_KEYS = [k.strip() for k in os.getenv("API_KEYS", "").split(",") if k.strip()]
 
 # ------------------------------------------------------

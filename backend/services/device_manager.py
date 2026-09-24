@@ -80,8 +80,12 @@ def is_oom_error(e: Exception) -> bool:
 
 
 def degrade_to_cpu(model) -> None:
-    """把已加载模型降级到 CPU 并清空 CUDA 缓存（OOM 后调用）"""
+    """把已加载模型降级到 CPU 并清空 CUDA 缓存（OOM 后调用）
+    【v3.20】model=None 直接跳过：加载期（模型实例还没建出来）也可能触发 OOM 降级
+    （vector_service / reranker 都以 degrade_to_cpu(None) 调用），判 None 前会 AttributeError"""
     global _resolved
+    if model is None:
+        return
     try:
         torch = _torch()
         model.to("cpu")

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 import json
+from config.settings import resolve_kb_id
 from schemas.models import ApiResponse, ChatRequest, ChatResponse, ChatMessage
 chat_router = APIRouter()
 # 测试接口保留（/test 供前端后端在线检测使用；【v3.12】"测试大模型"死代码路由已随 chat_service 死函数一并删除）
@@ -13,6 +14,7 @@ async def test_chat_module():
 # async def 内直调会阻塞事件循环（期间全站请求排队）；FastAPI 对同步 def 自动走线程池
 def send_message(req: ChatRequest):
     from services.chat_service import chat_single_turn
+    resolve_kb_id(req.kb_id)  # 【v3.20】kb_id 白名单：非法 400 / 未知 404，不再静默回退
     answer, sources, history = chat_single_turn(req.session_id, req.question, req.kb_id)
     resp = ChatResponse(answer=answer, sources=sources, history=history)
     return ApiResponse(data=resp.model_dump())
@@ -21,6 +23,8 @@ def send_message(req: ChatRequest):
 @chat_router.post("/stream", summary="流式发送消息（SSE）")
 async def stream_message(req: ChatRequest):
     from services.chat_service import chat_single_turn_stream
+    # 【v3.20】kb_id 必须在开流前校验：放进生成器里抛 HTTPException 只会变成断流而非 4xx 响应
+    resolve_kb_id(req.kb_id)
 
     def event_stream():
         for event in chat_single_turn_stream(req.session_id, req.question, req.kb_id):
@@ -61,5 +65,6 @@ async def rollback_chat(session_id: str, turn_index: int):
 def warmup_retrieval_api(kb_id: str = None):
     """预热 embedding、BM25、重排模型，避免第一次问答过慢。"""
     from services.chat_service import warmup_retrieval
+    resolve_kb_id(kb_id)  # 【v3.20】kb_id 白名单
     data = warmup_retrieval(kb_id)
     return ApiResponse(msg="检索模型预热完成", data=data)

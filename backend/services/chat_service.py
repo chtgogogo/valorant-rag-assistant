@@ -5,10 +5,11 @@ import time
 import threading
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from fastapi import HTTPException
 from config.settings import (
     LLM_CONFIG, SYSTEM_PROMPT, CHAT_CONFIG, RAG_CONFIG,
     FALLBACK_ANSWER, REFUSE_ANSWER, CUSTOM_RULES, DEFAULT_KB_ID, TICKET_CONFIG,
-    get_profile, CACHE_CONFIG,
+    get_profile, resolve_kb_id, CACHE_CONFIG,
 )
 from schemas.models import ChatMessage, SearchResult
 from utils.sensitive import filter_sensitive
@@ -65,7 +66,18 @@ def get_llm_fallback():
     return _llm_instances["fallback"]
 
 # -------------------------- 记忆相关工具函数 --------------------------
+# 【v3.20】session_id 白名单：session_id 会拼进历史文件路径，不校验时传
+# ../../x 可读/写/清任意 json（会话 id 形如 web_时间戳还可枚举越权）。
+# 与 kb_id 白名单同款规则（单一事实源 settings.KB_ID_RE），入口统一在此拦截。
+def _validate_session_id(session_id: str) -> str:
+    from config.settings import KB_ID_RE
+    if not session_id or not KB_ID_RE.match(str(session_id)):
+        raise HTTPException(status_code=400, detail="非法会话 ID")
+    return session_id
+
+
 def _get_history_path(session_id: str) -> str:
+    _validate_session_id(session_id)
     return os.path.join(CHAT_CONFIG["history_path"], f"{session_id}.json")
 def load_history(session_id: str) -> list[ChatMessage]:
     path = _get_history_path(session_id)
@@ -395,8 +407,9 @@ def _auto_create_ticket(session_id: str, question: str, rewritten: str,
 
 def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple[str, list[dict], list[ChatMessage]]:
     """单轮问答主流程（v3.0 管线），返回 (答案, 来源, 最新历史)。
-    v3.6：kb_id 即领域键——领域配置（提示词/兜底话术/关键词规则/改写提示词）运行时跟随 kb_id"""
-    kb_id = kb_id or DEFAULT_KB_ID
+    v3.6：kb_id 即领域键——领域配置（提示词/兜底话术/关键词规则/改写提示词）运行时跟随 kb_id
+    【v3.20】kb_id 走 resolve_kb_id 白名单：非法 400 / 未知 404，不再静默回退默认领域"""
+    kb_id = resolve_kb_id(kb_id)
     P = get_profile(kb_id)
     start_time = time.time()
 
@@ -479,115 +492,149 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
       {"type": "token",   "delta": "..."}
       {"type": "done",    "answer": "...", "history": [...]}
       {"type": "error",   "code": "...", "message": "..."}  # v3.10：生成失败降级提示，推送后流直接结束
+    【v3.20】整体包 try/finally：客户端中途断开（GeneratorExit）时，
+    已产出的答案仍会补保存历史+写审计（低置信建单在兜底路径产出 token 前已完成，
+    天然不被断连跳过）；LLM 失败路径维持 v3.10 行为——不发残缺答案、不写历史。
     """
-    kb_id = kb_id or DEFAULT_KB_ID
+    kb_id = resolve_kb_id(kb_id)  # 未知 kb_id：路由层已拦，生成器内双保险
     P = get_profile(kb_id)
     start_time = time.time()
-
-    # 敏感词 / 关键词规则 / 兜底：这些场景没有流式生成过程，一次性给出
-    is_sensitive, _ = filter_sensitive(question)
-    if is_sensitive:
-        answer = "你的问题包含敏感词，请重新提问~"
-        yield {"type": "token", "delta": answer}
-        yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in load_history(session_id)]}
-        return
-
-    for keyword, reply in (P.get("custom_rules") or {}).items():
-        if keyword in question:
-            history = append_history(session_id, question, reply)
-            yield {"type": "token", "delta": reply}
-            yield {"type": "done", "answer": reply, "history": [m.model_dump() for m in history]}
-            return
-
-    if kb_id == "valorant":
-        official_answer = answer_official_data_query(question)
-        if official_answer:
-            history = append_history(session_id, question, official_answer)
-            yield {"type": "token", "delta": official_answer}
-            yield {"type": "done", "answer": official_answer, "history": [m.model_dump() for m in history]}
-            return
-
-    question_for_prompt = replace_aliases_with_official(question)
-    history = load_history(session_id)
-
-    # 语义缓存（v3.19）：命中直接推来源+答案，毫秒级返回（跳过检索与生成全程）
-    cache = get_semantic_cache() if CACHE_CONFIG["enabled"] else None
-    cached = cache.lookup(question_for_prompt, kb_id) if cache else None
-    if cached:
-        answer, sources = cached["answer"], cached["sources"]
-        yield {"type": "sources", "sources": sources}
-        yield {"type": "token", "delta": answer}
-        history = append_history(session_id, question, answer)
-        log_qa(session_id, question, question_for_prompt, sources, answer,
-               (time.time() - start_time) * 1000, kb_id, "cache_hit")
-        yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in history]}
-        return
-
-    rewritten, results = _retrieve(question_for_prompt, history, kb_id, profile=P)
-    rewritten, results, _critic_log = _critic_refine(question_for_prompt, rewritten, results, kb_id)
+    # ---- 断连兜底状态（v3.20）----
+    answer = None            # 已产出的完整/部分答案
+    parts: list = []         # 流式分片收集（生成路径）
+    sources: list = []
     pipeline_desc = ("hybrid+rerank" if RAG_CONFIG.get("enable_rerank") else "hybrid") \
         if RAG_CONFIG.get("enable_hybrid_search") else "vector"
+    rewritten = question     # 审计字段兜底（断连发生在改写完成前时用原问题）
+    finalized = False        # 主流程已完成"保存历史+审计"（防 finally 重复落账）
+    abort_save = False       # LLM 失败路径显式不保存（维持 v3.10 行为）
 
-    if _should_fallback(results):
-        sources = []
-        yield {"type": "sources", "sources": sources}
-        answer = P["fallback_answer"] + _auto_create_ticket(session_id, question, rewritten, results, kb_id)
-        for ch in answer:
-            yield {"type": "token", "delta": ch}
-    else:
-        sources = _build_sources(results)
-        yield {"type": "sources", "sources": sources}
-        prompt = _build_rag_messages(history, results, question_for_prompt, profile=P)
-        chain = prompt | get_llm()
-        parts = []
-        try:
-            for chunk in chain.stream({"question": question_for_prompt}):
-                delta = chunk.content or ""
-                if delta:
-                    parts.append(delta)
-                    yield {"type": "token", "delta": delta}
-            answer = "".join(parts)
-        except Exception as e:
-            # v3.10：LLM 生成失败（429/5xx/超时/连接失败）不再把"抱歉"文案伪装成回答，
-            # 改推结构化 error 事件让前端停止 loading 并显示错误气泡，杜绝无限转圈
-            logger.error("流式大模型调用失败: %s", e)
-            error_event = _llm_error_event(e)
-            # 【v3.18】尚未产出任何 token 且属限流/模型过载类错误 → 备用模型重新流式生成；
-            # 已有部分 token 时换模型续写会前后不一致，维持 error 事件收尾
-            fb_model = LLM_CONFIG.get("fallback_model")
-            if not parts and fb_model and error_event["code"] in ("rate_limited", "server_error"):
-                logger.warning("[兜底] 主模型%s，流式切换备用模型 %s", error_event["code"], fb_model)
-                try:
-                    chain = prompt | get_llm_fallback()
-                    for chunk in chain.stream({"question": question_for_prompt}):
-                        delta = chunk.content or ""
-                        if delta:
-                            parts.append(delta)
-                            yield {"type": "token", "delta": delta}
-                    answer = "".join(parts)
-                    pipeline_desc += "+fallback"
-                except Exception as e2:
-                    logger.error("[兜底] 备用模型 %s 也失败: %s", fb_model, e2)
-                    error_event = _llm_error_event(e2)
+    try:
+        # 敏感词 / 关键词规则 / 兜底：这些场景没有流式生成过程，一次性给出
+        is_sensitive, _ = filter_sensitive(question)
+        if is_sensitive:
+            answer = "你的问题包含敏感词，请重新提问~"
+            yield {"type": "token", "delta": answer}
+            finalized = True  # 敏感词不写历史（原设计），断连也不补
+            yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in load_history(session_id)]}
+            return
+
+        for keyword, reply in (P.get("custom_rules") or {}).items():
+            if keyword in question:
+                history = append_history(session_id, question, reply)
+                answer = reply
+                finalized = True
+                yield {"type": "token", "delta": reply}
+                yield {"type": "done", "answer": reply, "history": [m.model_dump() for m in history]}
+                return
+
+        if kb_id == "valorant":
+            official_answer = answer_official_data_query(question)
+            if official_answer:
+                history = append_history(session_id, question, official_answer)
+                answer = official_answer
+                sources = []
+                finalized = True
+                yield {"type": "token", "delta": official_answer}
+                yield {"type": "done", "answer": official_answer, "history": [m.model_dump() for m in history]}
+                return
+
+        question_for_prompt = replace_aliases_with_official(question)
+        history = load_history(session_id)
+
+        # 语义缓存（v3.19）：命中直接推来源+答案，毫秒级返回（跳过检索与生成全程）
+        cache = get_semantic_cache() if CACHE_CONFIG["enabled"] else None
+        cached = cache.lookup(question_for_prompt, kb_id) if cache else None
+        if cached:
+            answer, sources = cached["answer"], cached["sources"]
+            yield {"type": "sources", "sources": sources}
+            yield {"type": "token", "delta": answer}
+            history = append_history(session_id, question, answer)
+            log_qa(session_id, question, question_for_prompt, sources, answer,
+                   (time.time() - start_time) * 1000, kb_id, "cache_hit")
+            finalized = True
+            yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in history]}
+            return
+
+        rewritten, results = _retrieve(question_for_prompt, history, kb_id, profile=P)
+        rewritten, results, _critic_log = _critic_refine(question_for_prompt, rewritten, results, kb_id)
+        pipeline_desc = ("hybrid+rerank" if RAG_CONFIG.get("enable_rerank") else "hybrid") \
+            if RAG_CONFIG.get("enable_hybrid_search") else "vector"
+
+        if _should_fallback(results):
+            sources = []
+            yield {"type": "sources", "sources": sources}
+            answer = P["fallback_answer"] + _auto_create_ticket(session_id, question, rewritten, results, kb_id)
+            for ch in answer:
+                yield {"type": "token", "delta": ch}
+        else:
+            sources = _build_sources(results)
+            yield {"type": "sources", "sources": sources}
+            prompt = _build_rag_messages(history, results, question_for_prompt, profile=P)
+            chain = prompt | get_llm()
+            try:
+                for chunk in chain.stream({"question": question_for_prompt}):
+                    delta = chunk.content or ""
+                    if delta:
+                        parts.append(delta)
+                        yield {"type": "token", "delta": delta}
+                answer = "".join(parts)
+            except Exception as e:
+                # v3.10：LLM 生成失败（429/5xx/超时/连接失败）不再把"抱歉"文案伪装成回答，
+                # 改推结构化 error 事件让前端停止 loading 并显示错误气泡，杜绝无限转圈
+                logger.error("流式大模型调用失败: %s", e)
+                error_event = _llm_error_event(e)
+                # 【v3.18】尚未产出任何 token 且属限流/模型过载类错误 → 备用模型重新流式生成；
+                # 已有部分 token 时换模型续写会前后不一致，维持 error 事件收尾
+                fb_model = LLM_CONFIG.get("fallback_model")
+                if not parts and fb_model and error_event["code"] in ("rate_limited", "server_error"):
+                    logger.warning("[兜底] 主模型%s，流式切换备用模型 %s", error_event["code"], fb_model)
+                    try:
+                        chain = prompt | get_llm_fallback()
+                        for chunk in chain.stream({"question": question_for_prompt}):
+                            delta = chunk.content or ""
+                            if delta:
+                                parts.append(delta)
+                                yield {"type": "token", "delta": delta}
+                        answer = "".join(parts)
+                        pipeline_desc += "+fallback"
+                    except Exception as e2:
+                        logger.error("[兜底] 备用模型 %s 也失败: %s", fb_model, e2)
+                        error_event = _llm_error_event(e2)
+                        log_qa(session_id, question, rewritten, sources,
+                               f"[生成失败:{error_event['code']}] {error_event['message']}",
+                               (time.time() - start_time) * 1000, kb_id, pipeline_desc + "+llm_error")
+                        abort_save = True  # 失败路径不把残缺内容落历史（v3.10 行为）
+                        yield error_event
+                        return
+                else:
                     log_qa(session_id, question, rewritten, sources,
                            f"[生成失败:{error_event['code']}] {error_event['message']}",
                            (time.time() - start_time) * 1000, kb_id, pipeline_desc + "+llm_error")
+                    abort_save = True  # 失败路径不把残缺内容落历史（v3.10 行为）
                     yield error_event
-                    return  # 错误后正常结束流：不发残缺答案，也不把失败文案写进对话历史
-            else:
-                log_qa(session_id, question, rewritten, sources,
-                       f"[生成失败:{error_event['code']}] {error_event['message']}",
-                       (time.time() - start_time) * 1000, kb_id, pipeline_desc + "+llm_error")
-                yield error_event
-                return  # 错误后正常结束流：不发残缺答案，也不把失败文案写进对话历史
+                    return
 
-    # 生成成功（未被错误分支提前 return）才写缓存；兜底回答 sources=[] 会被 put 内部忽略
-    if cache:
-        cache.put(question_for_prompt, kb_id, answer, sources)
-    history = append_history(session_id, question, answer)
-    log_qa(session_id, question, rewritten, sources, answer,
-           (time.time() - start_time) * 1000, kb_id, pipeline_desc)
-    yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in history]}
+        # 生成成功（未被错误分支提前 return）才写缓存；兜底回答 sources=[] 会被 put 内部忽略
+        if cache:
+            cache.put(question_for_prompt, kb_id, answer, sources)
+        history = append_history(session_id, question, answer)
+        log_qa(session_id, question, rewritten, sources, answer,
+               (time.time() - start_time) * 1000, kb_id, pipeline_desc)
+        finalized = True
+        yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in history]}
+    finally:
+        # 【v3.20】SSE 断连兜底：客户端中途断开（GeneratorExit 穿过 except Exception 直达此处），
+        # 已产出答案 → 补保存历史 + 写审计；不写缓存（部分答案质量未知）；
+        # 不刷错误日志（断连是正常客户端行为）。LLM 失败路径（abort_save）维持不落账。
+        if not finalized and not abort_save and (answer is not None or parts):
+            final_answer = answer if answer is not None else "".join(parts)
+            try:
+                append_history(session_id, question, final_answer)
+                log_qa(session_id, question, rewritten, sources, final_answer,
+                       (time.time() - start_time) * 1000, kb_id, pipeline_desc + "+disconnect")
+            except Exception as e:
+                logger.warning("[断连兜底] 补保存历史/审计失败(不影响流收尾): %s", e)
 
 
 def warmup_retrieval(kb_id: str = None) -> dict:

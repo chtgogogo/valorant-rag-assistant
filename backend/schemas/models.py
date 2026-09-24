@@ -1,5 +1,5 @@
 # 【共用文件】统一数据结构，不许改
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 # 所有接口统一返回格式，不许改
 class ApiResponse(BaseModel):
@@ -24,7 +24,9 @@ class ChatMessage(BaseModel):
     content: str  # 消息内容
 # 对话请求结构（前端 → 对话服务）
 class ChatRequest(BaseModel):
-    session_id: str  # 会话ID，隔离不同用户
+    # 【v3.20】session_id 双保险之一：模型层 pattern 拒绝路径穿越字符
+    # （服务层 _get_history_path 入口还有同款白名单校验，两层防线独立生效）
+    session_id: str = Field(pattern=r"^[\w\-]{1,64}$")  # 会话ID，隔离不同用户
     question: str  # 用户问题
     kb_id: Optional[str] = "valorant"  # 默认无畏契约知识库
 # 对话返回结构（对话服务 → 前端）

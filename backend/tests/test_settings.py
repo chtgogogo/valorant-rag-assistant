@@ -19,5 +19,13 @@ class TestGetProfile:
         profile = st.get_profile("ecommerce")
         assert profile.get("app_name")
 
-    def test_unknown_domain_falls_back_to_default(self):
-        assert st.get_profile("no-such-kb") is st.DOMAIN_PROFILE
+    def test_unknown_domain_raises_404(self):
+        # 【v3.20】未知 kb_id 不再静默回退默认领域（静默回退会掩盖客户端传错参数），改抛 404
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as ei:
+            st.get_profile("no-such-kb")
+        assert ei.value.status_code == 404
+
+    def test_none_falls_back_to_default(self):
+        # None（调用方不传 kb_id 的内部旧路径）仍回退默认领域
+        assert st.get_profile(None) is st.DOMAIN_PROFILE
