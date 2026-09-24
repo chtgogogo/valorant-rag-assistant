@@ -114,18 +114,29 @@ def bm25_search(question: str, kb_id: str, top_k: int) -> list[SearchResult]:
             doc_id=meta.get("doc_id", "unknown"),
             dense_score=None,
             version=meta.get("version"),
+            chunk_id=entry["ids"][idx] if idx < len(entry["ids"]) else None,
         ))
     return results
 
 
 def _rrf_fuse(dense: list[SearchResult], sparse: list[SearchResult]) -> list[SearchResult]:
-    """RRF 倒数排序融合：score = Σ 1/(k + rank)，只看排名不看原始分数量纲"""
-    rrf_scores: dict[str, float] = {}   # key: content 前 50 字 + doc_id，标识唯一块
+    """RRF 倒数排序融合：score = Σ 1/(k + rank)，只看排名不看原始分数量纲
+    【v3.25】融合键改为块唯一 id（chunk_id，chroma 块 id）——旧键"doc_id+内容前50字"
+    会让同文档内前 50 字相同的两个不同块互相覆盖；无 chunk_id 的旧数据回退旧键。
+    键一次性算好存 r.chunk_id 之外的本地 dict，不再在排序时重复拼接。"""
+    rrf_scores: dict[str, float] = {}
     blocks: dict[str, SearchResult] = {}
+    keys: dict[int, str] = {}  # id(r) -> 融合键（一次性计算，避免排序时重复拼接/不一致）
+
+    def _fuse_key(r: SearchResult) -> str:
+        if r.chunk_id:
+            return f"id::{r.chunk_id}"
+        return f"{r.doc_id}::{r.content[:50]}"  # 旧数据兼容回退
 
     def _add(items: list[SearchResult]):
         for rank, r in enumerate(items, start=1):
-            key = f"{r.doc_id}::{r.content[:50]}"
+            key = _fuse_key(r)
+            keys[id(r)] = key
             rrf_scores[key] = rrf_scores.get(key, 0.0) + 1.0 / (RRF_K + rank)
             if key not in blocks or (r.dense_score or 0) > (blocks[key].dense_score or 0):
                 # 同一块出现在两路时，保留向量分较高（信息更全）的那份
@@ -134,8 +145,8 @@ def _rrf_fuse(dense: list[SearchResult], sparse: list[SearchResult]) -> list[Sea
     _add(dense)
     _add(sparse)
 
-    fused = sorted(blocks.values(), key=lambda r: rrf_scores[f"{r.doc_id}::{r.content[:50]}"],
-                   reverse=True)
+    fused = sorted(blocks.values(),
+                   key=lambda r: rrf_scores[keys[id(r)]], reverse=True)
     return fused
 
 

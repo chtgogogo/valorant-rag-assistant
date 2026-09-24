@@ -125,27 +125,35 @@ class SemanticCache:
 
 # ---------------- 模块级单例（生产路径懒加载） ----------------
 _cache: SemanticCache | None = None
+_cache_lock = threading.Lock()  # 【v3.25】并发首调只建一次实例
+
+
+def _build_cache_instance() -> SemanticCache:
+    """构造生产缓存实例（encode 复用向量服务的共享 embedding 模型，懒加载）"""
+    from config.settings import CACHE_CONFIG
+    from services import vector_service
+
+    def _encode(text: str):
+        model = vector_service._get_embedding_model()
+        return model.encode([text], show_progress_bar=False,
+                            normalize_embeddings=True)[0]
+
+    return SemanticCache(
+        _encode,
+        threshold=CACHE_CONFIG["threshold"],
+        ttl_seconds=CACHE_CONFIG["ttl_minutes"] * 60,
+        max_entries=CACHE_CONFIG["max_entries"],
+        epoch_path=CACHE_CONFIG["epoch_path"],
+    )
 
 
 def get_semantic_cache() -> SemanticCache:
-    """生产单例：encode 复用向量服务的共享 embedding 模型（懒加载，首次查询才载模型）"""
+    """生产单例（【v3.25】double-checked locking：并发首调只创建一次实例）"""
     global _cache
-    if _cache is None:
-        from config.settings import CACHE_CONFIG
-        from services import vector_service
-
-        def _encode(text: str):
-            model = vector_service._get_embedding_model()
-            return model.encode([text], show_progress_bar=False,
-                                normalize_embeddings=True)[0]
-
-        _cache = SemanticCache(
-            _encode,
-            threshold=CACHE_CONFIG["threshold"],
-            ttl_seconds=CACHE_CONFIG["ttl_minutes"] * 60,
-            max_entries=CACHE_CONFIG["max_entries"],
-            epoch_path=CACHE_CONFIG["epoch_path"],
-        )
+    if _cache is None:  # 先查（无锁快路径）
+        with _cache_lock:
+            if _cache is None:  # 再查（等锁期间别的线程可能已建好）
+                _cache = _build_cache_instance()
     return _cache
 
 

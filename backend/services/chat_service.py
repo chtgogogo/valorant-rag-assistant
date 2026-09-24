@@ -493,6 +493,37 @@ def _audit_retrieval_fields(results: list[SearchResult]) -> dict:
     }
 
 
+def _prepare_turn(session_id: str, question: str, kb_id: str, P: dict) -> dict:
+    """【v3.25】流式/非流式共用的问答前置段（原先两段约 60 行复制粘贴）：
+    敏感词 → 超长/注入防护 → 关键词规则 → 官方直答 → 别名替换 → 历史 → 语义缓存。
+    返回 {"kind": ...} 由调用方分派（审计/事件产出方式两条链路本就不同，各自保留）：
+      sensitive / too_long / injection —— 直接话术返回（answer 已给出）
+      rule / official                  —— 命中回复（reply/answer），调用方负责写历史
+      retrieve                         —— 走检索管线（question_for_prompt/history/cache/cached）"""
+    is_sensitive, _ = filter_sensitive(question)
+    if is_sensitive:
+        return {"kind": "sensitive", "answer": "你的问题包含敏感词，请重新提问~"}
+    if len(question) > MAX_QUESTION_CHARS:
+        return {"kind": "too_long",
+                "answer": f"问题有点太长啦（最多 {MAX_QUESTION_CHARS} 字），请精简后再问～"}
+    if detect_prompt_injection(question):
+        return {"kind": "injection", "answer": P.get("refuse_answer", REFUSE_ANSWER)}
+    for keyword, reply in (P.get("custom_rules") or {}).items():
+        if keyword in question:
+            return {"kind": "rule", "reply": reply}
+    # 官方结构化数据优先（游戏领域专属：英雄/武器/地图数据文件）；其他领域跳过
+    if kb_id == "valorant":
+        official = answer_official_data_query(question)
+        if official:
+            return {"kind": "official", "answer": official}
+    question_for_prompt = replace_aliases_with_official(question)
+    history = load_history(session_id)
+    cache = get_semantic_cache() if CACHE_CONFIG["enabled"] else None
+    cached = cache.lookup(question_for_prompt, kb_id) if cache else None
+    return {"kind": "retrieve", "question_for_prompt": question_for_prompt,
+            "history": history, "cache": cache, "cached": cached}
+
+
 def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple[str, list[dict], list[ChatMessage]]:
     """单轮问答主流程（v3.0 管线），返回 (答案, 来源, 最新历史)。
     v3.6：kb_id 即领域键——领域配置（提示词/兜底话术/关键词规则/改写提示词）运行时跟随 kb_id
@@ -502,52 +533,40 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple
     start_time = time.time()
     usage_ledger: dict = {"entries": []}  # 【v3.22】本次问答全部 LLM 调用的 token 账本
 
-    # 1. 敏感词校验
-    is_sensitive, filtered_q = filter_sensitive(question)
-    if is_sensitive:
-        answer = "你的问题包含敏感词，请重新提问~"
+    # 1~3.5 前置段（【v3.25】与流式共用 _prepare_turn）
+    prep = _prepare_turn(session_id, question, kb_id, P)
+    kind = prep["kind"]
+    if kind == "sensitive":
+        answer = prep["answer"]
         log_qa(session_id, question, question, [], answer, (time.time() - start_time) * 1000,
                kb_id, "sensitive_block", error_class="refusal",
                token_usage=summarize_usage(usage_ledger))
         return answer, [], load_history(session_id)
-
-    # 1.5 成本与注入防护（v3.24）：超长输入直接拒绝（防 token 稀释+浪费）；
-    # 高危注入指令（忽略规则/套提示词）直接走拒答话术，审计标记 prompt_injection
-    if len(question) > MAX_QUESTION_CHARS:
-        answer = f"问题有点太长啦（最多 {MAX_QUESTION_CHARS} 字），请精简后再问～"
+    if kind == "too_long":
+        answer = prep["answer"]
         log_qa(session_id, question, question, [], answer, (time.time() - start_time) * 1000,
                kb_id, "too_long", error_class="refusal",
                token_usage=summarize_usage(usage_ledger))
         return answer, [], load_history(session_id)
-    if detect_prompt_injection(question):
-        answer = P.get("refuse_answer", REFUSE_ANSWER)
+    if kind == "injection":
+        answer = prep["answer"]
         log_qa(session_id, question, question, [], answer, (time.time() - start_time) * 1000,
                kb_id, "prompt_injection", error_class="refusal",
                token_usage=summarize_usage(usage_ledger))
         return answer, [], load_history(session_id)
+    if kind == "rule":
+        history = append_history(session_id, question, prep["reply"])
+        return prep["reply"], [], history
+    if kind == "official":
+        history = append_history(session_id, question, prep["answer"])
+        return prep["answer"], [], history
 
-    # 2. 自定义关键词规则优先（随领域）
-    for keyword, reply in (P.get("custom_rules") or {}).items():
-        if keyword in question:
-            history = append_history(session_id, question, reply)
-            return reply, [], history
-
-    # 官方结构化数据优先（游戏领域专属：英雄/武器/地图数据文件）；其他领域跳过
-    if kb_id == "valorant":
-        official_answer = answer_official_data_query(question)
-        if official_answer:
-            history = append_history(session_id, question, official_answer)
-            return official_answer, [], history
-
-    question_for_prompt = replace_aliases_with_official(question)
-
-    # 3. 加载历史
-    history = load_history(session_id)
-
+    question_for_prompt = prep["question_for_prompt"]
+    history = prep["history"]
+    cache = prep["cache"]
     # 3.5 语义缓存（v3.19）：相似问题命中直接复用答案，跳过 改写→检索→重排→生成 全程；
     # 只缓存"带来源的成功回答"，兜底/失败回答不入缓存；知识库变更经 epoch 信号自动失效
-    cache = get_semantic_cache() if CACHE_CONFIG["enabled"] else None
-    cached = cache.lookup(question_for_prompt, kb_id) if cache else None
+    cached = prep["cached"]
     if cached:
         answer, sources = cached["answer"], cached["sources"]
         history = append_history(session_id, question, answer)
@@ -655,58 +674,52 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
     error_class = "none"
 
     try:
-        # 敏感词 / 关键词规则 / 兜底：这些场景没有流式生成过程，一次性给出
-        is_sensitive, _ = filter_sensitive(question)
-        if is_sensitive:
-            answer = "你的问题包含敏感词，请重新提问~"
+        # 前置段（【v3.25】与非流式共用 _prepare_turn）：这些场景没有流式生成过程，一次性给出
+        prep = _prepare_turn(session_id, question, kb_id, P)
+        kind = prep["kind"]
+        if kind == "sensitive":
+            answer = prep["answer"]
             yield {"type": "token", "delta": answer}
             finalized = True  # 敏感词不写历史（原设计），断连也不补
             yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in load_history(session_id)]}
             return
-
-        # 成本与注入防护（v3.24）：超长/注入直接一次性话术返回（无 LLM 调用，零 token）
-        if len(question) > MAX_QUESTION_CHARS:
-            answer = f"问题有点太长啦（最多 {MAX_QUESTION_CHARS} 字），请精简后再问～"
+        if kind == "too_long":
+            answer = prep["answer"]
             error_class = "refusal"
             yield {"type": "token", "delta": answer}
             finalized = True
             yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in load_history(session_id)]}
             return
-        if detect_prompt_injection(question):
-            answer = P.get("refuse_answer", REFUSE_ANSWER)
+        if kind == "injection":
+            answer = prep["answer"]
             error_class = "refusal"
             pipeline_desc += "+prompt_injection"
             yield {"type": "token", "delta": answer}
             finalized = True
             yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in load_history(session_id)]}
             return
+        if kind == "rule":
+            history = append_history(session_id, question, prep["reply"])
+            answer = prep["reply"]
+            finalized = True
+            yield {"type": "token", "delta": answer}
+            yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in history]}
+            return
+        if kind == "official":
+            history = append_history(session_id, question, prep["answer"])
+            answer = prep["answer"]
+            sources = []
+            finalized = True
+            yield {"type": "token", "delta": answer}
+            yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in history]}
+            return
 
-        for keyword, reply in (P.get("custom_rules") or {}).items():
-            if keyword in question:
-                history = append_history(session_id, question, reply)
-                answer = reply
-                finalized = True
-                yield {"type": "token", "delta": reply}
-                yield {"type": "done", "answer": reply, "history": [m.model_dump() for m in history]}
-                return
-
-        if kb_id == "valorant":
-            official_answer = answer_official_data_query(question)
-            if official_answer:
-                history = append_history(session_id, question, official_answer)
-                answer = official_answer
-                sources = []
-                finalized = True
-                yield {"type": "token", "delta": official_answer}
-                yield {"type": "done", "answer": official_answer, "history": [m.model_dump() for m in history]}
-                return
-
-        question_for_prompt = replace_aliases_with_official(question)
-        history = load_history(session_id)
+        question_for_prompt = prep["question_for_prompt"]
+        history = prep["history"]
+        cache = prep["cache"]
 
         # 语义缓存（v3.19）：命中直接推来源+答案，毫秒级返回（跳过检索与生成全程）
-        cache = get_semantic_cache() if CACHE_CONFIG["enabled"] else None
-        cached = cache.lookup(question_for_prompt, kb_id) if cache else None
+        cached = prep["cached"]
         if cached:
             answer, sources = cached["answer"], cached["sources"]
             yield {"type": "sources", "sources": sources}

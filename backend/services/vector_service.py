@@ -12,33 +12,39 @@ from config.settings import VECTOR_DB_PATH, EMBEDDING_CONFIG
 from schemas.models import DocumentChunk, SearchResult
 
 # -------------------------- 全局实例（懒加载，避免启动时卡住） --------------------------
+import threading  # 【v3.25】模型单例锁
+
 _embedding_model = None
 _chroma_client = None
+_embedding_lock = threading.Lock()  # 【v3.25】并发首调只加载一次（1-2GB 模型不能重复加载）
 
 
 def _get_embedding_model():
-    """懒加载 bge-small-zh-v1.5 embedding 模型（GPU 优先，OOM 自动降级 CPU）"""
+    """懒加载 bge-small-zh-v1.5 embedding 模型（GPU 优先，OOM 自动降级 CPU）
+    【v3.25】double-checked locking：并发首调时只创建一次实例，不再竞态覆盖"""
     global _embedding_model
-    if _embedding_model is None:
-        # 延迟导入：sentence_transformers 会把 torch 一起拉进来（约 1.5GB），
-        # 挪到真正要用模型的时候才 import，进程启动就轻得多
-        from sentence_transformers import SentenceTransformer
-        from services.device_manager import get_device, is_oom_error, degrade_to_cpu
-        model_name = EMBEDDING_CONFIG["model_name"]
-        # bge 系列模型在 HuggingFace 上的完整路径是 BAAI/xxx，配置里写的是简写
-        if "/" not in model_name:
-            model_name = f"BAAI/{model_name}"
-        device = get_device()
-        print(f"[向量引擎] 正在加载 Embedding 模型: {model_name} (device={device}) ...")
-        try:
-            _embedding_model = SentenceTransformer(model_name, device=device)
-        except Exception as e:
-            if is_oom_error(e) and device == "cuda":
-                degrade_to_cpu(None)
-                _embedding_model = SentenceTransformer(model_name, device="cpu")
-            else:
-                raise
-        print("[向量引擎] Embedding 模型加载完成")
+    if _embedding_model is None:  # 先查（无锁快路径，热路径零开销）
+        with _embedding_lock:
+            if _embedding_model is None:  # 再查（等锁期间别的线程可能已加载完）
+                # 延迟导入：sentence_transformers 会把 torch 一起拉进来（约 1.5GB），
+                # 挪到真正要用模型的时候才 import，进程启动就轻得多
+                from sentence_transformers import SentenceTransformer
+                from services.device_manager import get_device, is_oom_error, degrade_to_cpu
+                model_name = EMBEDDING_CONFIG["model_name"]
+                # bge 系列模型在 HuggingFace 上的完整路径是 BAAI/xxx，配置里写的是简写
+                if "/" not in model_name:
+                    model_name = f"BAAI/{model_name}"
+                device = get_device()
+                print(f"[向量引擎] 正在加载 Embedding 模型: {model_name} (device={device}) ...")
+                try:
+                    _embedding_model = SentenceTransformer(model_name, device=device)
+                except Exception as e:
+                    if is_oom_error(e) and device == "cuda":
+                        degrade_to_cpu(None)
+                        _embedding_model = SentenceTransformer(model_name, device="cpu")
+                    else:
+                        raise
+                print("[向量引擎] Embedding 模型加载完成")
     return _embedding_model
 
 
@@ -116,7 +122,15 @@ def search_vector(question: str, kb_id: str = "valorant", top_k: int = 3) -> lis
             return []
 
         # 生成查询向量
-        query_embedding = model.encode([question], show_progress_bar=False).tolist()
+        # 【v3.25】bge 官方要求查询侧加指令前缀——消融裁决（2026-09-25，主集 20 题 skip-llm，
+        # CPU）：加/不加逐项完全一致（Hit@5 12/17、MRR 0.598、拒答 3/3，两份报告
+        # report_hybrid_20260925_064617/064701）→ 无提升，按"数字说了算"默认关闭；
+        # RAG_BGE_QUERY_PREFIX=1 可开（更大评测集或真实多轮场景可再验证）
+        if os.getenv("RAG_BGE_QUERY_PREFIX", "0") == "1" and "bge" in EMBEDDING_CONFIG["model_name"].lower():
+            query_text = f"为这个句子生成表示以用于检索相关文章：{question}"
+        else:
+            query_text = question
+        query_embedding = model.encode([query_text], show_progress_bar=False).tolist()
 
         # ChromaDB 检索
         results = collection.query(
@@ -132,13 +146,15 @@ def search_vector(question: str, kb_id: str = "valorant", top_k: int = 3) -> lis
                 # cosine 距离转相似度分数: distance=0 → score=1.0
                 distance = results["distances"][0][i] if results["distances"] else 1.0
                 score = max(0.0, 1.0 - distance)
+                chunk_id = results["ids"][0][i] if results.get("ids") else None  # 【v3.25】块唯一 id
 
                 search_results.append(SearchResult(
                     content=doc,
                     source=metadata.get("doc_name", "未知文档"),
                     score=round(score, 4),
                     doc_id=metadata.get("doc_id", "unknown"),
-                    version=metadata.get("version")  # 【v3.21】文档版本随块 metadata 透传
+                    version=metadata.get("version"),  # 【v3.21】文档版本随块 metadata 透传
+                    chunk_id=chunk_id,
                 ))
 
         return search_results

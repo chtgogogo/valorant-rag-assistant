@@ -7,6 +7,7 @@
 # ------------------------------------------------------------
 import math
 import os
+import threading
 from typing import TYPE_CHECKING
 
 # HuggingFace 镜像与缓存位置（必须在 import sentence_transformers 之前设置）
@@ -22,29 +23,33 @@ import logging
 logger = logging.getLogger(__name__)
 
 _cross_encoder = None
+_cross_encoder_lock = threading.Lock()  # 【v3.25】并发首调只加载一次
 
 
 def _get_cross_encoder() -> "CrossEncoder":
-    """懒加载 bge-reranker 模型（GPU 优先，OOM 自动降级 CPU；与向量模型共用设备策略，同进同退）"""
+    """懒加载 bge-reranker 模型（GPU 优先，OOM 自动降级 CPU；与向量模型共用设备策略，同进同退）
+    【v3.25】double-checked locking：并发首调时只创建一次实例"""
     global _cross_encoder
-    if _cross_encoder is None:
-        # 延迟导入：同样是避免启动时把 torch 拖进来
-        from sentence_transformers import CrossEncoder
-        from services.device_manager import get_device, is_oom_error, degrade_to_cpu
-        model_name = RAG_CONFIG["rerank_model"]
-        if "/" not in model_name:
-            model_name = f"BAAI/{model_name}"
-        device = get_device()
-        print(f"[重排序] 正在加载 Rerank 模型: {model_name} (device={device}) ...")
-        try:
-            _cross_encoder = CrossEncoder(model_name, device=device, max_length=512)
-        except Exception as e:
-            if is_oom_error(e) and device == "cuda":
-                degrade_to_cpu(None)
-                _cross_encoder = CrossEncoder(model_name, device="cpu", max_length=512)
-            else:
-                raise
-        print("[重排序] Rerank 模型加载完成")
+    if _cross_encoder is None:  # 先查（无锁快路径）
+        with _cross_encoder_lock:
+            if _cross_encoder is None:  # 再查（等锁期间可能已被别的线程加载）
+                # 延迟导入：同样是避免启动时把 torch 拖进来
+                from sentence_transformers import CrossEncoder
+                from services.device_manager import get_device, is_oom_error, degrade_to_cpu
+                model_name = RAG_CONFIG["rerank_model"]
+                if "/" not in model_name:
+                    model_name = f"BAAI/{model_name}"
+                device = get_device()
+                print(f"[重排序] 正在加载 Rerank 模型: {model_name} (device={device}) ...")
+                try:
+                    _cross_encoder = CrossEncoder(model_name, device=device, max_length=512)
+                except Exception as e:
+                    if is_oom_error(e) and device == "cuda":
+                        degrade_to_cpu(None)
+                        _cross_encoder = CrossEncoder(model_name, device="cpu", max_length=512)
+                    else:
+                        raise
+                print("[重排序] Rerank 模型加载完成")
     return _cross_encoder
 
 
