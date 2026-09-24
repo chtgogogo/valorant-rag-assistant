@@ -213,7 +213,7 @@ SYSTEM_PROMPT = DOMAIN_PROFILE["system_prompt"]
 #     输入限长 + IP 双层限流把"被刷烧 token"的上限锁死；
 #     单次问答成本约 0.00035 元 → 默认上限 100 次/天/IP ≈ 0.035 元/天
 # ------------------------------------------------------
-MAX_QUESTION_CHARS = int(os.getenv("MAX_QUESTION_CHARS", "300"))  # 单次提问最大字符数
+MAX_QUESTION_CHARS = int(os.getenv("MAX_QUESTION_CHARS", "100"))  # 单次提问最大字符数（v3.28：300→100，游戏问答足矣）
 RATE_LIMIT_CONFIG = {
     "enabled": os.getenv("RATE_LIMIT_ENABLED", "1") == "1",
     "per_minute": int(os.getenv("RATE_LIMIT_CHAT_PER_MIN", "5")),  # 每分钟提问上限（挡刷屏脚本）

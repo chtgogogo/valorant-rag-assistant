@@ -42,6 +42,8 @@
      </aside>
  
      <div class="chat-container" :class="{ sidebarActive: sidebarOpen }">
+      <!-- 移动端侧栏遮罩：点空白处收起侧栏（v3.28） -->
+      <div class="sidebar-backdrop" v-if="sidebarOpen" @click="sidebarOpen = false"></div>
        <!-- 动态背景 -->
        <div class="bg-gradient-wpr">
          <div class="bg-gradient"></div>
@@ -180,12 +182,14 @@
           ref="inputRef"
           v-model="inputText"
           class="msg-input"
-          placeholder="输入无畏契约相关问题..."
+          placeholder="输入问题（最多 100 字）..."
           rows="1"
-          @keydown.enter.exact.prevent="handleSend"
+          maxlength="100"
+          @keydown.enter.exact="onEnterKey"
           @input="autoResize"
           :disabled="loading"
         ></textarea>
+        <span class="input-counter" v-if="inputText.length > 60">{{ inputText.length }}/100</span>
         <button
           class="send-btn"
           @click="handleSend"
@@ -361,6 +365,16 @@ function autoResize() {
       el.style.height = Math.min(el.scrollHeight, 160) + 'px'
     }
   })
+}
+
+// 【v3.28】回车键分设备：桌面=发送，手机虚拟键盘=换行（发送靠按钮，符合移动端聊天习惯）。
+// 手机端 maxlength=100 与后端 MAX_QUESTION_CHARS=100 对齐，超发会被后端拒绝。
+const isTouch = window.matchMedia('(pointer: coarse)').matches
+
+function onEnterKey(e) {
+  if (isTouch) return // 不 preventDefault，保留换行
+  e.preventDefault()
+  handleSend()
 }
 
 // ---- 背景粒子样式 ----
@@ -626,10 +640,14 @@ async function handleRollback() {
 /* ============ LAYOUT ============ */
 .app-layout {
   height: 100vh;
+  height: 100dvh; /* 【v3.28】动态视口：手机地址栏收缩时不再把底部输入框顶出屏幕 */
   display: flex;
   background: #06080a;
   overflow: hidden;
 }
+
+/* 【v3.28】移动端侧栏遮罩（桌面隐藏，≤768 显示） */
+.sidebar-backdrop { display: none; }
 
 /* ============ SIDEBAR ============ */
 .kb-sidebar {
@@ -1336,12 +1354,22 @@ async function handleRollback() {
 /* ============ INPUT AREA ============ */
 .chat-footer {
   padding: 14px 24px 16px;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   background: rgba(6, 8, 12, 0.96);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border-top: 1px solid rgba(90, 110, 127, 0.1);
   z-index: 10;
   flex-shrink: 0;
+}
+
+.input-counter {
+  align-self: flex-end;
+  font-size: 11px;
+  color: var(--val-text-muted);
+  padding: 0 2px 10px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .input-wrapper {
@@ -1507,26 +1535,83 @@ async function handleRollback() {
 .msg-leave-to { opacity: 0; transform: translateX(20px); }
 
 /* ============ RESPONSIVE ============ */
+/* 【v3.28】移动端适配总纲（参考 NutUI / TDesign Mobile 规范）：
+   ① 输入字号 ≥16px 防 iOS 聚焦自动放大；② 100dvh + safe-area 底部安全区；
+   ③ 触控目标 ≥40px；④ 关键尺寸 clamp/vw 随屏宽缩放；⑤ 表格横向滚动 */
 @media (max-width: 768px) {
+  /* ---- 侧栏：抽屉式 + 遮罩 ---- */
   .kb-sidebar {
     position: fixed;
     left: 0;
     top: 0;
     bottom: 0;
     z-index: 200;
+    width: min(78vw, 300px);
+    min-width: min(78vw, 300px);
     box-shadow: 6px 0 40px rgba(0, 0, 0, 0.5);
   }
-  .kb-sidebar:not(.open) { transform: translateX(-100%); width: 280px; min-width: 280px; }
+  .kb-sidebar:not(.open) { transform: translateX(-100%); }
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 150;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+  }
   .chat-container.sidebarActive { margin-left: 0; }
-  .chat-header { padding: 10px 14px; }
-  .chat-main { padding: 14px; }
-  .chat-footer { padding: 10px 14px 12px; }
-  .msg-body { max-width: 85%; }
-  .brand-text h1 { font-size: 15px; }
+
+  /* ---- 顶栏：压缩腾空间 ---- */
+  .chat-header { padding: 8px 12px; gap: 8px; }
+  .logo-wrap { width: 30px; height: 30px; }
+  .brand-text h1 { font-size: 14px; letter-spacing: 0.5px; }
+  .header-tools { gap: 5px; }
+  .domain-btn { padding: 4px 10px; font-size: 12px; }
+  .connection-badge { display: none; }   /* 窄屏收起（连接状态侧栏底部仍有） */
+  .tool-btn { min-width: 38px; min-height: 38px; padding: 6px; }
+  .menu-icon { width: 20px; height: 20px; }
+
+  /* ---- 消息区：字号上探+触控友好 ---- */
+  .chat-main { padding: 12px 12px 16px; }
+  .msg-row { gap: 8px; margin-bottom: 16px; }
+  .msg-avatar, .avatar-img, .avatar-svg { width: 30px; height: 30px; }
+  .msg-body { max-width: 86%; }
+  .msg-bubble {
+    font-size: 15px;   /* 手机阅读基准 */
+    padding: 10px 13px;
+    line-height: 1.65;
+  }
+  .fb-btn { padding: 6px 11px; font-size: 13px; }   /* 触控目标 ≥36px */
+
+  /* ---- 欢迎屏：vw 随屏缩放 ---- */
+  .welcome-area { padding: 20px 14px 36px; }
+  .welcome-hero { margin-bottom: 22px; }
+  .hero-icon { width: clamp(52px, 15vw, 72px); height: clamp(52px, 15vw, 72px); }
+  .hero-title { font-size: clamp(19px, 5.5vw, 23px); }
+  .hero-desc { font-size: 12.5px; }
+  .quick-card { padding: 12px 14px; }
+
+  /* ---- 输入区：防 iOS 缩放 + 安全区 ---- */
+  .chat-footer { padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)); }
+  .input-wrapper { padding: 4px; border-radius: 12px; }
+  .msg-input {
+    font-size: 16px;   /* ≥16px：iOS 聚焦不再自动放大页面 */
+    min-height: 42px;
+    max-height: 120px;
+    padding: 8px 8px 8px 11px;
+  }
+  .send-btn { width: 44px; height: 44px; }   /* 触控目标 44px */
+  .send-icon { width: 18px; height: 18px; }
+
+  /* ---- Markdown：表格/代码块横向滚动不撑破 ---- */
+  .md-body :deep(table) { display: block; overflow-x: auto; white-space: nowrap; }
+  .md-body :deep(pre) { max-width: 100%; }
+}
+
+/* 超窄屏（≤480）：再收一轮 */
+@media (max-width: 480px) {
+  .tool-btn-text { display: none; }   /* "知识库"文字按钮收起，图标按钮保留 */
   .brand-text p { display: none; }
-  .hero-title { font-size: 20px; }
-  .quick-grid { grid-template-columns: 1fr; }
-  .connection-badge .badge-label { display: none; }
 }
 </style>
 

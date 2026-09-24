@@ -25,3 +25,14 @@ html, body {
   --val-border: #2a3a4a;
   --val-accent: #00d4ff;
 }
+
+/* 【v3.28】移动端基础优化 */
+html, body {
+  overscroll-behavior: none; /* 防下拉橡皮筋把整页拖动 */
+}
+* {
+  -webkit-tap-highlight-color: transparent; /* 去移动端点击高亮块 */
+}
+button, .quick-card, .cat-item, .cat-header {
+  touch-action: manipulation; /* 消除双击缩放延迟 */
+}

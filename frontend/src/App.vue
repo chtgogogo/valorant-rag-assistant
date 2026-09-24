@@ -38,4 +38,14 @@ const view = ref('chat')
   color: var(--val-red);
   border-color: rgba(255, 70, 85, 0.4);
 }
+
+/* 【v3.28】移动端：抬高避开底部输入框 + 安全区（按钮在本组件 scoped 作用域，须在此覆盖） */
+@media (max-width: 768px) {
+  .admin-entry {
+    bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+    right: 12px;
+    padding: 10px 16px;
+    font-size: 14px;
+  }
+}
 </style>
