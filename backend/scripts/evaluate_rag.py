@@ -14,42 +14,38 @@
 import argparse
 import json
 import os
+import re
 import sys
 import time
 
-# ---------- 1. 先解析参数并设置环境变量（必须在 import config 之前） ----------
+from langchain.prompts import ChatPromptTemplate
+
+# ---------- 命令行定义（解析延迟到 __main__：模块可被 pytest 导入测纯函数） ----------
 parser = argparse.ArgumentParser(description="RAG 效果评估")
 parser.add_argument("--mode", choices=["baseline", "hybrid", "custom"], default="hybrid",
                     help="baseline=纯向量(旧v2管线) hybrid=改写+混合+重排(新v3管线)")
 parser.add_argument("--skip-llm", action="store_true", help="跳过答案生成，只测检索指标")
 parser.add_argument("--suite", default=None, help="自定义评测集路径（默认 backend/eval/eval_set.json）")
-args = parser.parse_args()
-
-# v3.3：评测默认关质量自评 Critic（它是对话层增强，开了会让评测变慢且混入重试；需要时可显式 RAG_CRITIC=1）
-os.environ.setdefault("RAG_CRITIC", "0")
-# v3.4：评测固定温度 0——生成指标不再随采样漂移（v3.3 实测同口径两次差 9.4 个百分点）
-os.environ.setdefault("LLM_TEMPERATURE", "0")
-
-if args.mode == "baseline":
-    os.environ["RAG_HYBRID"] = "0"
-    os.environ["RAG_RERANK"] = "0"
-    os.environ["RAG_QUERY_REWRITE"] = "0"
-elif args.mode == "hybrid":
-    os.environ["RAG_HYBRID"] = "1"
-    os.environ["RAG_RERANK"] = "1"
-    os.environ["RAG_QUERY_REWRITE"] = "1"
-# custom：不覆盖任何环境变量，管线开关由外部传入（消融实验用）
-
-# ---------- 2. 导入项目模块 ----------
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.settings import RAG_CONFIG, FALLBACK_ANSWER, REFUSE_ANSWER  # noqa: E402
-from services.chat_service import _retrieve, _build_rag_messages, _call_llm_with_retry, _should_fallback  # noqa: E402
-from schemas.models import ChatMessage  # noqa: E402
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SUITE_PATH = args.suite or os.path.join(BACKEND_DIR, "eval", "eval_set.json")
 
 REFUSAL_MARKERS = ["只解答", "没找到足够相关", "换个问法", "暂时不会"]  # 拒答/兜底话术特征
+
+
+def _apply_mode_env(args):
+    """评测环境预设——必须在导入 config.settings 之前调用（管线开关在 import 时读 env）
+    v3.3：默认关质量自评 Critic（对话层增强，开了变慢且混入重试）；v3.4：温度固定 0 消除采样漂移"""
+    os.environ.setdefault("RAG_CRITIC", "0")
+    os.environ.setdefault("LLM_TEMPERATURE", "0")
+    if args.mode == "baseline":
+        os.environ["RAG_HYBRID"] = "0"
+        os.environ["RAG_RERANK"] = "0"
+        os.environ["RAG_QUERY_REWRITE"] = "0"
+    elif args.mode == "hybrid":
+        os.environ["RAG_HYBRID"] = "1"
+        os.environ["RAG_RERANK"] = "1"
+        os.environ["RAG_QUERY_REWRITE"] = "1"
+    # custom：不覆盖任何环境变量，管线开关由外部传入（消融实验用）
 
 
 def judge_refusal(answer: str, sources: list) -> bool:
@@ -57,8 +53,77 @@ def judge_refusal(answer: str, sources: list) -> bool:
     return not sources or any(m in answer for m in REFUSAL_MARKERS)
 
 
-def main():
-    with open(SUITE_PATH, "r", encoding="utf-8") as f:
+# ---------- 忠实度（faithfulness）评测：简化版 RAGAS ----------
+# 判定"答案的关键声明是否都能被检索来源支持"：judge 模型对照参考资料核对答案，
+# 二元判定 + 列出无依据声明（允许同义转述，不允许来源里没有的事实/数字）。
+# 判分失败（LLM 异常/输出不可解析）记 None，不进忠实度分母，报告单列。
+_FAITHFULNESS_PROMPT = ChatPromptTemplate.from_messages([
+    ("system",
+     "你是 RAG 答案忠实度评审员。给你用户问题、参考资料和助手答案，判断答案中的关键声明"
+     "是否都能被参考资料支持（允许同义转述，不允许参考资料里没有的事实或数字）。"
+     # 注意：提示词里的 JSON 花括号必须双写转义，否则被 langchain 当占位符解析
+     # （v3.3 Critic 提示词、v3.16 生成链路同款坑——本处初版也踩了，判分容错拦下）
+     '只输出JSON，格式：{{"faithful": true或false, "unsupported": ["参考资料无法支持的声明"]}}，'
+     "完全支持时 unsupported 为空数组。不要输出任何其他内容。"),
+    ("human", "用户问题：{question}\n\n参考资料：\n{context}\n\n助手答案：\n{answer}"),
+])
+
+_faithfulness_llm = None  # 【v3.15 同款】懒加载：import 本模块不建实例、不要求密钥
+
+
+def parse_faithfulness(raw: str) -> dict:
+    """解析 judge 输出的 JSON（容错截取第一个 {...}）；不可解析返回 faithful=None"""
+    m = re.search(r"\{.*\}", raw or "", re.DOTALL)
+    if not m:
+        return {"faithful": None, "unsupported": []}
+    try:
+        data = json.loads(m.group(0))
+        return {"faithful": bool(data.get("faithful")), "unsupported": data.get("unsupported") or []}
+    except Exception:
+        return {"faithful": None, "unsupported": []}
+
+
+def judge_faithfulness(question: str, answer: str, results: list) -> dict:
+    """忠实度判分：3 次尝试（退避 3s/6s 抗免费档限流），仍失败返回 faithful=None（不计入分母）"""
+    global _faithfulness_llm
+    if _faithfulness_llm is None:
+        from services.llm_factory import make_llm
+        _faithfulness_llm = make_llm(thinking=False, timeout=60, temperature=0)
+    context = "\n".join(
+        f"[{i + 1}]（来源：{r.source}）{r.content[:300]}" for i, r in enumerate(results[:5])
+    )
+    waits = (3, 6, 0)
+    for attempt in range(3):
+        try:
+            chain = _FAITHFULNESS_PROMPT | _faithfulness_llm
+            raw = chain.invoke({"question": question, "context": context, "answer": answer}).content
+            parsed = parse_faithfulness(raw)
+            if parsed["faithful"] is not None:
+                return parsed
+            print(f"  [忠实度判分第{attempt + 1}次输出不可解析] {str(raw)[:80]}")
+        except Exception as e:
+            print(f"  [忠实度判分第{attempt + 1}次失败] {e}")
+        time.sleep(waits[attempt])
+    return {"faithful": None, "unsupported": []}
+
+
+def main(args):
+    # 环境变量就位后才能导入项目模块（settings 与管线开关在 import 时读 env）
+    _apply_mode_env(args)
+    sys.path.insert(0, BACKEND_DIR)
+    from config.settings import FALLBACK_ANSWER, REFUSE_ANSWER  # noqa: E402
+    from services.chat_service import _retrieve, _build_rag_messages, _call_llm_with_retry, _should_fallback  # noqa: E402
+    from schemas.models import ChatMessage  # noqa: E402
+
+    suite_path = args.suite or os.path.join(BACKEND_DIR, "eval", "eval_set.json")
+
+    # 【v3.17】预热一次检索再开始计时：首条用例的耗时会混入模型冷启动（首次加载
+    # embedding/重排模型可达数十秒），污染 P50/P95；预热本身不进统计
+    t_warm = time.time()
+    _retrieve("预热：无畏契约英雄和武器介绍", [], "valorant")
+    print(f"  [预热完成 {time.time() - t_warm:.1f}s，冷启动耗时不进延迟统计]")
+
+    with open(suite_path, "r", encoding="utf-8") as f:
         suite = json.load(f)
     cases = suite["cases"]
     print(f"\n{'='*62}\nRAG 评估  模式={args.mode}  用例={len(cases)} 条  "
@@ -77,6 +142,9 @@ def main():
     refusal_total = 0
     refusal_ok = 0
     observe_total = 0  # 【v3.16】观察题计数：只记录行为不计分，须从检索指标分母扣除
+    faith_total = 0    # 【v3.17】忠实度：判分成功且答案非兜底的题数
+    faith_ok = 0
+    faith_unknown = 0  # 判分失败题数（不进分母，报告单列）
     details = []
 
     for case in cases:
@@ -171,6 +239,17 @@ def main():
                 sim_sum += sim
                 sim_cnt += 1
                 row["ref_similarity"] = round(sim, 3)
+            # 【v3.17】忠实度判分：只对正常回答判（兜底回答没有"依据来源"可言）
+            if results:
+                faith = judge_faithfulness(q, answer, results)
+                row["faithful"] = faith["faithful"]
+                if faith.get("unsupported"):
+                    row["unsupported_claims"] = faith["unsupported"][:3]
+                if faith["faithful"] is None:
+                    faith_unknown += 1
+                else:
+                    faith_total += 1
+                    faith_ok += 1 if faith["faithful"] else 0
         details.append(row)
 
     # ---- 汇总输出 ----
@@ -196,6 +275,10 @@ def main():
         print(f"  答案关键词覆盖  : {kw_hit}/{kw_total} = {kw_hit/kw_total:.1%}")
         if sim_cnt:
             print(f"  标准答案相似度  : {sim_sum/sim_cnt:.3f}（{sim_cnt} 题有 reference_answer，语义余弦 1.0=一致）")
+        if faith_total or faith_unknown:
+            pct = f"{faith_ok/faith_total:.1%}" if faith_total else "-"
+            extra = f"（判分失败 {faith_unknown} 题不计入）" if faith_unknown else ""
+            print(f"  答案忠实度      : {faith_ok}/{faith_total} = {pct}{extra}")
     if refusal_total:
         print(f"  拒答正确率      : {refusal_ok}/{refusal_total} = {refusal_ok/refusal_total:.0%}")
     # ---- v3.4：官方直答 / 分类型 / 延迟 / 设备口径 ----
@@ -236,6 +319,10 @@ def main():
                 f.write(f"- 关键词覆盖: {kw_hit}/{kw_total}\n")
                 if sim_cnt:
                     f.write(f"- 标准答案相似度: {sim_sum/sim_cnt:.3f}（{sim_cnt} 题）\n")
+                if faith_total or faith_unknown:
+                    pct = f"{faith_ok/faith_total:.1%}" if faith_total else "-"
+                    extra = f"（判分失败 {faith_unknown} 题不计入）" if faith_unknown else ""
+                    f.write(f"- 答案忠实度: {faith_ok}/{faith_total} = {pct}{extra}\n")
             if refusal_total:
                 f.write(f"- 拒答正确率: {refusal_ok}/{refusal_total}\n")
             if official_total:
@@ -247,19 +334,21 @@ def main():
             if ms_list:
                 ms_sorted = sorted(ms_list)
                 f.write(f"\n- 检索延迟: P50 {ms_sorted[len(ms_sorted)//2]:.0f}ms / P95 {ms_sorted[min(len(ms_sorted)-1, int(len(ms_sorted)*0.95))]:.0f}ms\n")
-            f.write("| id | 类型 | 结果 | 耗时ms | 问题 |\n|---|---|---|---|---|\n")
+            f.write("| id | 类型 | 结果 | 耗时ms | 忠实 | 问题 |\n|---|---|---|---|---|---|\n")
             for r in details:
                 flag = "✓拒答" if r.get("refused") else (f"命中@{r['hit_rank']}" if r.get("hit_rank") else "✗未命中")
                 if r.get("official_ok") is not None:
                     flag = "✓官方直答" if r["official_ok"] else "✗直答失败"
                 elif r.get("behavior"):
                     flag = f"观察:{r['behavior']}"
+                faithful = ("✓" if r["faithful"] else "✗") if r.get("faithful") is not None else ""
                 suffix = f" → {r['rewritten']}" if r.get("rewritten") else ""
-                f.write(f"| {r['id']} | {r['type']} | {flag} | {r.get('retrieve_ms', '-')} | {r['question'][:30]}{suffix} |\n")
+                f.write(f"| {r['id']} | {r['type']} | {flag} | {r.get('retrieve_ms', '-')} | {faithful} | {r['question'][:30]}{suffix} |\n")
         print(f"  报告已保存: {rep}")
     except Exception as e:
         print(f"  报告落盘失败(不影响评测): {e}")
 
 
 if __name__ == "__main__":
-    main()
+    _args = parser.parse_args()
+    main(_args)

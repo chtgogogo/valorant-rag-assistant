@@ -2,6 +2,7 @@ import os
 import json
 import re
 import time
+import threading
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from config.settings import (
@@ -70,18 +71,47 @@ def save_history(session_id: str, history: list[ChatMessage]):
     path = _get_history_path(session_id)
     with open(path, "w", encoding="utf-8") as f:
         json.dump([msg.model_dump() for msg in cut_history], f, ensure_ascii=False, indent=2)
+
+
+# 【v3.17】per-session 历史锁：send 路由是同步 def（FastAPI 走线程池），同一会话并发请求
+# 会在多线程里同时"读历史→追加→写文件"，无锁时互相覆盖丢消息
+_history_locks: dict = {}
+_locks_guard = threading.Lock()
+
+
+def _get_history_lock(session_id: str) -> threading.Lock:
+    with _locks_guard:
+        if session_id not in _history_locks:
+            _history_locks[session_id] = threading.Lock()
+        return _history_locks[session_id]
+
+
+def append_history(session_id: str, user_content: str, assistant_content: str) -> list[ChatMessage]:
+    """持锁追加一轮问答并持久化：load→append→save 在同一把 per-session 锁内完成，
+    防并发请求互相覆盖。返回追加后的完整历史。"""
+    with _get_history_lock(session_id):
+        history = load_history(session_id)
+        history.append(ChatMessage(role="user", content=user_content))
+        history.append(ChatMessage(role="assistant", content=assistant_content))
+        save_history(session_id, history)
+        return history
+
+
 def clear_history(session_id: str) -> bool:
-    path = _get_history_path(session_id)
-    if os.path.exists(path):
-        os.remove(path)
+    with _get_history_lock(session_id):
+        path = _get_history_path(session_id)
+        if os.path.exists(path):
+            os.remove(path)
     return True
+
+
 def rollback_history(session_id: str, turn_index: int) -> bool:
-    history = load_history(session_id)
-    if turn_index < 0 or turn_index > len(history):
-        return False
-    new_history = history[:turn_index]
-    save_history(session_id, new_history)
-    return True
+    with _get_history_lock(session_id):
+        history = load_history(session_id)
+        if turn_index < 0 or turn_index > len(history):
+            return False
+        save_history(session_id, history[:turn_index])
+        return True
 # -------------------------- 检索管线（v3.0：改写→混合召回→重排） --------------------------
 def _retrieve(question: str, history: list[ChatMessage], kb_id: str, profile: dict = None) -> tuple[str, list[SearchResult]]:
     """
@@ -346,20 +376,14 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple
     # 2. 自定义关键词规则优先（随领域）
     for keyword, reply in (P.get("custom_rules") or {}).items():
         if keyword in question:
-            history = load_history(session_id)
-            history.append(ChatMessage(role="user", content=question))
-            history.append(ChatMessage(role="assistant", content=reply))
-            save_history(session_id, history)
+            history = append_history(session_id, question, reply)
             return reply, [], history
 
     # 官方结构化数据优先（游戏领域专属：英雄/武器/地图数据文件）；其他领域跳过
     if kb_id == "valorant":
         official_answer = answer_official_data_query(question)
         if official_answer:
-            history = load_history(session_id)
-            history.append(ChatMessage(role="user", content=question))
-            history.append(ChatMessage(role="assistant", content=official_answer))
-            save_history(session_id, history)
+            history = append_history(session_id, question, official_answer)
             return official_answer, [], history
 
     question_for_prompt = replace_aliases_with_official(question)
@@ -386,10 +410,8 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple
         answer = _call_llm_with_retry(prompt, {"question": question_for_prompt})
         sources = _build_sources(results)
 
-    # 9. 更新历史 + 审计留痕
-    history.append(ChatMessage(role="user", content=question))
-    history.append(ChatMessage(role="assistant", content=answer))
-    save_history(session_id, history)
+    # 9. 更新历史（持锁）+ 审计留痕
+    history = append_history(session_id, question, answer)
     log_qa(session_id, question, rewritten, sources, answer,
            (time.time() - start_time) * 1000, kb_id, pipeline_desc)
     return answer, sources, history
@@ -418,10 +440,7 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
 
     for keyword, reply in (P.get("custom_rules") or {}).items():
         if keyword in question:
-            history = load_history(session_id)
-            history.append(ChatMessage(role="user", content=question))
-            history.append(ChatMessage(role="assistant", content=reply))
-            save_history(session_id, history)
+            history = append_history(session_id, question, reply)
             yield {"type": "token", "delta": reply}
             yield {"type": "done", "answer": reply, "history": [m.model_dump() for m in history]}
             return
@@ -429,10 +448,7 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
     if kb_id == "valorant":
         official_answer = answer_official_data_query(question)
         if official_answer:
-            history = load_history(session_id)
-            history.append(ChatMessage(role="user", content=question))
-            history.append(ChatMessage(role="assistant", content=official_answer))
-            save_history(session_id, history)
+            history = append_history(session_id, question, official_answer)
             yield {"type": "token", "delta": official_answer}
             yield {"type": "done", "answer": official_answer, "history": [m.model_dump() for m in history]}
             return
@@ -474,9 +490,7 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
             yield error_event
             return  # 错误后正常结束流：不发残缺答案，也不把失败文案写进对话历史
 
-    history.append(ChatMessage(role="user", content=question))
-    history.append(ChatMessage(role="assistant", content=answer))
-    save_history(session_id, history)
+    history = append_history(session_id, question, answer)
     log_qa(session_id, question, rewritten, sources, answer,
            (time.time() - start_time) * 1000, kb_id, pipeline_desc)
     yield {"type": "done", "answer": answer, "history": [m.model_dump() for m in history]}

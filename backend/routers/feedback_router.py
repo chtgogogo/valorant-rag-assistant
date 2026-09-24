@@ -1,9 +1,9 @@
 # 【新增 v3.8】用户反馈接口：点赞/点踩落库 + 最近反馈只读查询（管理页用）
-from fastapi import APIRouter, Depends, HTTPException
+# 【v3.17】鉴权由 main.py include_router 统一挂载，router 内不再重复挂（去双重挂载）
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from services import feedback_service
-from utils.auth import verify_api_key
 from schemas.models import ApiResponse
 
 feedback_router = APIRouter()
@@ -17,7 +17,7 @@ class FeedbackRequest(BaseModel):
 
 
 @feedback_router.post("", summary="提交评价：对一条 AI 回复点赞/点踩，同问题同答案重复评价时覆盖原记录")
-def submit_feedback(req: FeedbackRequest, _=Depends(verify_api_key)):
+def submit_feedback(req: FeedbackRequest):
     if req.rating not in ("up", "down"):
         raise HTTPException(status_code=400, detail="rating 只能是 up/down")
     if not req.answer.strip():
@@ -27,6 +27,6 @@ def submit_feedback(req: FeedbackRequest, _=Depends(verify_api_key)):
 
 
 @feedback_router.get("/recent", summary="最近 N 条反馈（默认50，badcase 回流与管理页查询用）")
-def recent_feedback(limit: int = 50, _=Depends(verify_api_key)):
+def recent_feedback(limit: int = 50):
     items = feedback_service.list_recent(min(max(limit, 1), 200))
     return ApiResponse(data={"feedback": items, "count": len(items)})

@@ -12,7 +12,7 @@ import chromadb
 import jieba
 from rank_bm25 import BM25Okapi
 
-from config.settings import VECTOR_DB_PATH, RAG_CONFIG
+from config.settings import VECTOR_DB_PATH, RAG_CONFIG, DEFAULT_KB_ID
 from schemas.models import SearchResult
 from services.vector_service import search_vector, _get_chroma_client
 
@@ -108,12 +108,15 @@ def _rrf_fuse(dense: list[SearchResult], sparse: list[SearchResult]) -> list[Sea
     return fused
 
 
-def hybrid_search(question: str, kb_id: str = "valorant",
+def hybrid_search(question: str, kb_id: str = None,
                   recall_k: int = None) -> list[SearchResult]:
     """
     混合检索主入口：向量召回 + BM25 召回 → RRF 融合排序
     :return: 融合排序后的候选列表（长度 ≤ 2*recall_k，交给 rerank 精选）
     """
+    if kb_id is None:
+        # 【v3.17】不再硬编码 "valorant"，跟随默认领域配置（多领域运行时一致）
+        kb_id = DEFAULT_KB_ID
     if recall_k is None:
         recall_k = RAG_CONFIG["recall_k"]
 

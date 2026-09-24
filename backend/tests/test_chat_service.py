@@ -1,9 +1,11 @@
-# 对话服务纯函数：兜底判定、去重、错误分类、懒加载实例、提示词组装
+# 对话服务纯函数：兜底判定、去重、错误分类、懒加载实例、提示词组装、历史锁
+import threading
+
 import pytest
 from schemas.models import ChatMessage, SearchResult
 
 import services.chat_service as cs
-from config.settings import RAG_CONFIG
+from config.settings import CHAT_CONFIG, RAG_CONFIG
 
 
 def _r(score: float, dense: float = None, degraded: bool = False,
@@ -86,3 +88,26 @@ class TestBuildRagMessages:
             [_r(0.9, content="普通内容")], "继续")
         msgs = prompt.format_messages(question="继续")
         assert any("{token}" in m.content for m in msgs)
+
+
+class TestHistoryLock:
+    def test_concurrent_appends_no_loss(self, tmp_path, monkeypatch):
+        # v3.17 per-session 锁：多线程并发追加同一会话，一条都不能丢
+        # （截断上限一并调大，避免 max_history_turns 的既有截断干扰断言）
+        monkeypatch.setitem(CHAT_CONFIG, "history_path", str(tmp_path))
+        monkeypatch.setitem(CHAT_CONFIG, "max_history_turns", 1000)
+
+        def worker(i: int):
+            for j in range(5):
+                cs.append_history("lock_test", f"q{i}-{j}", f"a{i}-{j}")
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        history = cs.load_history("lock_test")
+        assert len(history) == 100  # 10 线程 × 5 轮 × 2 条，无锁时读改写竞态会丢
+        assert all(h.role in ("user", "assistant") and h.content for h in history)
+        cs.clear_history("lock_test")

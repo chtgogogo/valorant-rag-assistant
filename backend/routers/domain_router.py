@@ -1,15 +1,15 @@
 # 【新增 v3.6】领域列表接口：前端一键切换知识库/领域的数据源
-from fastapi import APIRouter, Depends
+# 【v3.17】鉴权由 main.py include_router 统一挂载，router 内不再重复挂（去双重挂载）
+from fastapi import APIRouter
 
 from config.settings import DOMAIN_PROFILES, DOMAIN
 from schemas.models import ApiResponse
-from utils.auth import verify_api_key
 
 domain_router = APIRouter()
 
 
 @domain_router.get("/list", summary="可用领域列表（前端切换控件数据源）")
-def domain_list(_=Depends(verify_api_key)):
+def domain_list():
     domains = [
         {
             "domain": name,                      # 领域键（= kb_id，请求时透传）
