@@ -1,0 +1,110 @@
+{
+  "cases": [
+    {
+      "id": "M01",
+      "type": "多轮指代",
+      "history": [
+        {
+          "role": "user",
+          "content": "捷风的E技能是什么？"
+        },
+        {
+          "role": "assistant",
+          "content": "捷风的E技能是顺风（Tailwind），向移动方向瞬间冲刺，用于快速拉扯和躲弹。"
+        }
+      ],
+      "question": "它的大招呢？",
+      "expected_docs": [
+        "无畏契约英雄介绍.md"
+      ],
+      "expected_keywords": [
+        "飓刃"
+      ]
+    },
+    {
+      "id": "M02",
+      "type": "多轮指代",
+      "history": [
+        {
+          "role": "user",
+          "content": "正义手枪多少钱？"
+        },
+        {
+          "role": "assistant",
+          "content": "正义（Sheriff）价格800信用点，30米内身体伤害55、爆头伤害159.5。"
+        }
+      ],
+      "question": "那爆头伤害呢？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "159"
+      ]
+    },
+    {
+      "id": "M03",
+      "type": "多轮指代",
+      "history": [
+        {
+          "role": "user",
+          "content": "幽影怎么玩？"
+        },
+        {
+          "role": "assistant",
+          "content": "幽影（Omen）是控场英雄，核心是传送绕后和烟球封锁视野。"
+        }
+      ],
+      "question": "他的传送怎么用？",
+      "expected_docs": [
+        "无畏契约英雄介绍.md"
+      ],
+      "expected_keywords": [
+        "传送"
+      ]
+    },
+    {
+      "id": "M04",
+      "type": "多轮指代",
+      "history": [
+        {
+          "role": "user",
+          "content": "无畏契约英雄分几个定位？"
+        },
+        {
+          "role": "assistant",
+          "content": "分为决斗、先锋、控场/烟位、哨位四个定位。"
+        }
+      ],
+      "question": "决斗位都有谁？",
+      "expected_docs": [
+        "无畏契约英雄介绍.md"
+      ],
+      "expected_keywords": [
+        "捷风"
+      ]
+    },
+    {
+      "id": "M05",
+      "type": "多轮指代",
+      "history": [
+        {
+          "role": "user",
+          "content": "蜂刺适合什么距离？"
+        },
+        {
+          "role": "assistant",
+          "content": "蜂刺（Stinger）1100信用点，15米内伤害高，适合近距离泼水。"
+        }
+      ],
+      "question": "那正面刚枪呢？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": []
+    }
+  ],
+  "meta": {
+    "purpose": "多轮指代消融子集（v3.23）：开/关查询改写各跑一次，量化改写对 5 题多轮指代的真实收益"
+  }
+}

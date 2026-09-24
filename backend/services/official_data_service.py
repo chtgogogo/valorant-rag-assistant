@@ -129,7 +129,7 @@ def expand_query_aliases(question: str) -> str:
 
 
 def _is_hero_list_question(q: str) -> bool:
-    return any(k in q for k in ["全部英雄", "所有英雄", "英雄列表", "英雄大全", "英雄汇总", "有哪些英雄", "多少英雄", "几个英雄", "全英雄", "英雄都有谁"])
+    return any(k in q for k in ["全部英雄", "所有英雄", "英雄列表", "英雄大全", "英雄汇总", "有哪些英雄", "多少英雄", "几个英雄", "全英雄", "英雄都有谁", "多少个英雄", "个英雄"])
 
 
 def _is_map_list_question(q: str) -> bool:
@@ -137,7 +137,7 @@ def _is_map_list_question(q: str) -> bool:
 
 
 def _is_weapon_list_question(q: str) -> bool:
-    return any(k in q for k in ["全部武器", "所有武器", "武器列表", "武器大全", "武器汇总", "枪械列表", "有哪些武器", "武器价格表", "武器价格"])
+    return any(k in q for k in ["全部武器", "所有武器", "武器列表", "武器大全", "武器汇总", "枪械列表", "有哪些武器", "武器价格表", "武器价格", "多少把武器", "多少武器", "把武器"])
 
 
 def _render_hero_table(heroes):
@@ -180,7 +180,7 @@ def answer_weapon_query(q: str):
     w = _find_weapon(q)
     if not w:
         return None
-    if any(k in q for k in ["多少钱", "价格", "售价", "买", "cost", "price"]):
+    if any(k in q for k in ["多少钱", "价格", "售价", "买", "要钱", "免费", "cost", "price"]):
         return f"**{w.get('cn')} / {w.get('en')}** 的价格是 **{w.get('cost')}** 信用点。\n\n> 数据来源：`knowledge_base/weapons.json`"
     if any(k in q for k in ["伤害", "伤害值", "打身体", "打头", "爆头"]):
         dr = (w.get("damageRanges") or [{}])[0]

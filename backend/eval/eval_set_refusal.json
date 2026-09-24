@@ -1,0 +1,43 @@
+{
+  "meta": {
+    "purpose": "拒答+误杀双向量评测集（v3.23）：8 题'应拒'（知识库没有的）+ 8 题'必答'（库内确定有答案但问法换过）",
+    "rule": "应拒题期望被拒答/兜底（expect_refusal=true）；必答题期望正常回答（误杀=被拒答）",
+    "evidence": "每道必答题出题时已在知识库检索自查（skip-llm，CPU）：top1 命中预期文档且不触发兜底判定",
+    "created": "2026-09-25"
+  },
+  "cases": [
+    {"id": "K01", "type": "黑话", "question": "eco局是什么意思",
+     "expected_docs": ["无畏契约游戏术语黑话大全.md"], "expected_keywords": ["eco"]},
+    {"id": "K02", "type": "黑话改写", "question": "rush打法是怎么个打法",
+     "expected_docs": ["无畏契约进阶战术与阵容体系.md", "无畏契约游戏术语黑话大全.md"], "expected_keywords": []},
+    {"id": "K03", "type": "改写", "question": "怎么买枪最划算",
+     "expected_docs": ["无畏契约经济系统详解.md"], "expected_keywords": []},
+    {"id": "K04", "type": "改写", "question": "上分有什么诀窍",
+     "expected_docs": ["无畏契约排位上分指南.md"], "expected_keywords": []},
+    {"id": "K05", "type": "改写", "question": "新手玩哪个英雄比较好上手",
+     "expected_docs": ["无畏契约新手攻略.md", "无畏契约英雄介绍.md"], "expected_keywords": []},
+    {"id": "K06", "type": "改写", "question": "怎么练枪法才准",
+     "expected_docs": ["无畏契约枪械控制与训练方法.md"], "expected_keywords": []},
+    {"id": "K07", "type": "黑话", "question": "拉枪线是什么意思",
+     "expected_docs": ["无畏契约游戏术语黑话大全.md"], "expected_keywords": []},
+    {"id": "K08", "type": "综合", "question": "攻防两边分别要注意什么",
+     "expected_docs": ["无畏契约地图攻略.md"], "expected_keywords": []},
+
+    {"id": "X01", "type": "其他游戏", "question": "英雄联盟的德莱文怎么出装",
+     "expect_refusal": true},
+    {"id": "X02", "type": "需实时数据", "question": "现在无畏契约职业联赛VCT的实时比分是多少",
+     "expect_refusal": true, "note": "真实难点：检索会命中术语相关块（非拒答判定盲区），考察生成侧是否诚实"},
+    {"id": "X03", "type": "库内无数据", "question": "无畏契约各英雄最新胜率排行榜是什么",
+     "expect_refusal": true, "note": "真实难点：知识库无胜率数据但检索有相似块"},
+    {"id": "X04", "type": "库内无数据", "question": "无畏契约所有皮肤的价格一览表",
+     "expect_refusal": true},
+    {"id": "X05", "type": "超时间范围", "question": "无畏契约手游什么时候上线",
+     "expect_refusal": true},
+    {"id": "X06", "type": "超时间范围", "question": "下个版本会出新地图吗",
+     "expect_refusal": true},
+    {"id": "X07", "type": "需实时数据", "question": "今天无畏契约商城轮换了哪些皮肤",
+     "expect_refusal": true},
+    {"id": "X08", "type": "业务无关", "question": "帮我查一下明天的天气预报",
+     "expect_refusal": true}
+  ]
+}

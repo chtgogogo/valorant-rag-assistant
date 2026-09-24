@@ -184,8 +184,12 @@ def main(args):
                 # 只测检索：与真实管线同一套兜底判定（来源为空或置信分低于阈值）
                 refused = not results or _should_fallback(results)
             else:
-                prompt = _build_rag_messages([], results, q) if results else None
-                answer = _call_llm_with_retry(prompt, {"question": q}) if prompt else FALLBACK_ANSWER
+                # 【v3.23 修复】与真实管线同口径：先兜底判定，放行才生成
+                if not results or _should_fallback(results):
+                    answer = FALLBACK_ANSWER
+                else:
+                    prompt = _build_rag_messages([], results, q)
+                    answer = _call_llm_with_retry(prompt, {"question": q})
                 refused = judge_refusal(answer, results)
             refusal_ok += 1 if refused else 0
             row["refused"] = refused
@@ -269,10 +273,18 @@ def main(args):
         print(f"  [{row['id']}] {flag} ({ms}ms) {row['question'][:26]}{extra}{rewritten}")
 
     print(f"\n{'-'*62}\n汇总（模式={args.mode}）")
-    print(f"  检索 Hit@5      : {hit_cnt}/{retrieval_cases} = {hit_cnt/retrieval_cases:.1%}")
-    print(f"  检索 MRR        : {mrr_sum/retrieval_cases:.3f}")
+    # 【v3.23】除零保护：官方直答集单独跑时检索题为 0，检索指标显示 N/A 而非崩溃
+    if retrieval_cases:
+        print(f"  检索 Hit@5      : {hit_cnt}/{retrieval_cases} = {hit_cnt/retrieval_cases:.1%}")
+        print(f"  检索 MRR        : {mrr_sum/retrieval_cases:.3f}")
+    else:
+        print("  检索 Hit@5      : N/A（本集无普通检索题）")
+        print("  检索 MRR        : N/A")
     if not args.skip_llm:
-        print(f"  答案关键词覆盖  : {kw_hit}/{kw_total} = {kw_hit/kw_total:.1%}")
+        if kw_total:
+            print(f"  答案关键词覆盖  : {kw_hit}/{kw_total} = {kw_hit/kw_total:.1%}")
+        else:
+            print("  答案关键词覆盖  : N/A（本集无关键词覆盖题）")
         if sim_cnt:
             print(f"  标准答案相似度  : {sim_sum/sim_cnt:.3f}（{sim_cnt} 题有 reference_answer，语义余弦 1.0=一致）")
         if faith_total or faith_unknown:
@@ -314,9 +326,15 @@ def main(args):
             if observe_total:
                 extra_counts += f" + 观察 {observe_total}"
             f.write(f"- 用例：{len(cases)} 条（检索 {retrieval_cases} + 拒答 {refusal_total}{extra_counts}）｜ 生成：{'关' if args.skip_llm else '开'}\n")
-            f.write(f"- Hit@5: {hit_cnt}/{retrieval_cases}｜MRR: {mrr_sum/retrieval_cases:.3f}\n")
+            if retrieval_cases:
+                f.write(f"- Hit@5: {hit_cnt}/{retrieval_cases}｜MRR: {mrr_sum/retrieval_cases:.3f}\n")
+            else:
+                f.write("- Hit@5/MRR: N/A（本集无普通检索题，全部为直答/拒答类）\n")
             if not args.skip_llm:
-                f.write(f"- 关键词覆盖: {kw_hit}/{kw_total}\n")
+                if kw_total:
+                    f.write(f"- 关键词覆盖: {kw_hit}/{kw_total}\n")
+                else:
+                    f.write("- 关键词覆盖: N/A（本集无关键词覆盖题）\n")
                 if sim_cnt:
                     f.write(f"- 标准答案相似度: {sim_sum/sim_cnt:.3f}（{sim_cnt} 题）\n")
                 if faith_total or faith_unknown:

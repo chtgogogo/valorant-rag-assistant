@@ -116,6 +116,7 @@ def phase1_baseline():
     th = _threshold()
     print(f"兜底阈值: {th}")
     tickets = []
+    baseline_rows = []
     all_below = True
     for c in CASES:
         top1, n = _top1(c["q"])
@@ -123,10 +124,11 @@ def phase1_baseline():
         all_below = all_below and not hit
         status = "会兜底✓" if not hit else "直接命中✗(库里有答案,不构成兜底场景)"
         print(f"  [{status}] top1={top1:.3f} 召回{n}条 | {c['q']}")
+        baseline_rows.append({"q": c["q"], "top1": round(top1, 3), "below": not hit})
         tid = ticket_service.create_ticket(c["q"], c["q"], top1, KB_ID, f"{MARK}_s1")
         tickets.append({"id": tid, **c})
     print(f"基线结论: {'全部兜底，闭环前提成立' if all_below else '存在直接命中，请更换未覆盖的个案问题'}")
-    return tickets
+    return tickets, baseline_rows
 
 
 def phase2_resolve(tickets):
@@ -140,6 +142,7 @@ def phase3_retest():
     print(f"\n========== Phase 3 复测：同题 + 换问法改写题 ==========")
     th = _threshold()
     same_hit, para_hit, same_scores, para_scores = 0, 0, [], []
+    rows = []
     for c in CASES:
         top1, _ = _top1(c["q"])
         same_scores.append(top1)
@@ -149,6 +152,8 @@ def phase3_retest():
         para_scores.append(top1p)
         s2 = top1p >= th
         para_hit += s2
+        rows.append({"q": c["q"], "same_top1": round(top1, 3), "same_hit": s1,
+                     "para": c["paraphrase"], "para_top1": round(top1p, 3), "para_hit": s2})
         print(f"  同题 top1={top1:.3f} [{'命中✓' if s1 else '未中✗'}] | "
               f"改写「{c['paraphrase']}」 top1={top1p:.3f} [{'命中✓' if s2 else '未中✗'}]")
     n = len(CASES)
@@ -156,8 +161,31 @@ def phase3_retest():
     print(f"同题二次命中:   {same_hit}/{n} = {same_hit / n * 100:.0f}%")
     print(f"改写题泛化命中: {para_hit}/{n} = {para_hit / n * 100:.0f}%")
     print(f"统计口径: rerank 分 ≥ 兜底阈值({th}) 视为命中（即不再触发兜底/建单）")
-    return {"same_hit": same_hit, "para_hit": para_hit, "n": n,
-            "same_scores": same_scores, "para_scores": para_scores}
+    return {"same_hit": same_hit, "para_hit": para_hit, "n": n, "threshold": th,
+            "same_scores": same_scores, "para_scores": para_scores, "rows": rows}
+
+
+def save_report(baseline_rows, result):
+    """【v3.23】评测报告落盘 eval/reports/（仿 evaluate_rag 的报告机制）"""
+    import datetime
+    rep_dir = Path(__file__).resolve().parent.parent / "eval" / "reports"
+    rep_dir.mkdir(parents=True, exist_ok=True)
+    rep = rep_dir / f"report_ticket_loop_{datetime.datetime.now():%Y%m%d_%H%M%S}.md"
+    with open(rep, "w", encoding="utf-8") as f:
+        f.write(f"# 工单闭环评测报告（{datetime.datetime.now():%Y-%m-%d %H:%M:%S}）\n\n")
+        f.write(f"- 闭环链路：低置信兜底 → 自动建工单 → 人工答案回流知识库 → 同题复问可命中\n")
+        f.write(f"- 基线：{len(baseline_rows)} 个个案全部低于兜底阈值 "
+                f"{'✓' if all(r['below'] for r in baseline_rows) else '✗（存在直接命中）'}\n")
+        f.write(f"- **同题二次命中: {result['same_hit']}/{result['n']}**\n")
+        f.write(f"- **改写题泛化命中: {result['para_hit']}/{result['n']}**\n")
+        f.write(f"- 口径: rerank 分 ≥ 兜底阈值({result['threshold']}) 视为命中\n\n")
+        f.write("| 个案问题 | 基线top1 | 同题top1 | 同题 | 改写问法 | 改写top1 | 改写 |\n|---|---|---|---|---|---|---|\n")
+        for b, r in zip(baseline_rows, result["rows"]):
+            f.write(f"| {b['q'][:24]} | {b['top1']} | {r['same_top1']} "
+                    f"| {'✓' if r['same_hit'] else '✗'} | {r['para'][:20]} "
+                    f"| {r['para_top1']} | {'✓' if r['para_hit'] else '✗'} |\n")
+    print(f"报告已落盘: {rep}")
+    return rep
 
 
 def main():
@@ -165,10 +193,11 @@ def main():
         phase_clean()
     stats_before = ticket_service.ticket_stats()
     print(f"工单库当前状态: {stats_before}")
-    tickets = phase1_baseline()
+    tickets, baseline_rows = phase1_baseline()
     phase2_resolve(tickets)
     result = phase3_retest()
     print(f"\n最终工单库: {ticket_service.ticket_stats()}")
+    save_report(baseline_rows, result)
     return result
 
 

@@ -568,6 +568,16 @@ def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple
     if cache and fallback_flag != [False]:
         cache.put(question_for_prompt, kb_id, answer, sources)
 
+    # 8.8 空来源拦截（v3.23）：正常检索管线产出的答案必须带来源——answer 有内容但
+    # sources 意外为空（如召回结果被过滤异常清空）时不直接输出，转低置信兜底。
+    # 官方直答/关键词规则/敏感词/缓存命中路径已提前 return（天然白名单）；
+    # 低置信兜底路径 error_class 已是 refusal，不会进此分支。
+    if not sources and answer and error_class == "none":
+        logger.warning("[空来源拦截] answer 非空但 sources 为空，转低置信兜底 q=%s", question[:30])
+        answer = P["fallback_answer"] + _auto_create_ticket(session_id, question, rewritten, results, kb_id)
+        sources = []
+        error_class = "empty_sources"
+
     # 9. 更新历史（持锁）+ 审计留痕
     history = append_history(session_id, question, answer)
     log_qa(session_id, question, rewritten, sources, answer,
@@ -673,62 +683,82 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
         else:
             sources = _build_sources(results)
             yield {"type": "sources", "sources": sources}
-            prompt = _build_rag_messages(history, results, question_for_prompt, profile=P)
-            chain = prompt | get_llm()
-            stream_usage = None  # 【v3.22】最后分片的真实 usage（兼容端点通常不带，则走估算）
-            try:
-                for chunk in chain.stream({"question": question_for_prompt}):
-                    tu = (getattr(chunk, "response_metadata", None) or {}).get("token_usage") or {}
-                    if tu.get("total_tokens"):
-                        stream_usage = {
-                            "prompt_tokens": int(tu.get("prompt_tokens") or 0),
-                            "completion_tokens": int(tu.get("completion_tokens") or 0),
-                            "total_tokens": int(tu.get("total_tokens") or 0),
-                        }
-                    delta = chunk.content or ""
-                    if delta:
-                        parts.append(delta)
-                        yield {"type": "token", "delta": delta}
-                answer = "".join(parts)
-                _record_llm_usage(usage_ledger, "generate", "primary", prompt,
-                                  {"question": question_for_prompt},
-                                  _UsageProxy(answer, stream_usage))
-            except Exception as e:
-                # v3.10：LLM 生成失败（429/5xx/超时/连接失败）不再把"抱歉"文案伪装成回答，
-                # 改推结构化 error 事件让前端停止 loading 并显示错误气泡，杜绝无限转圈
-                logger.error("流式大模型调用失败: %s", e)
-                error_event = _llm_error_event(e)
-                # 【v3.22】失败调用也记账（已产出部分按估算，诚实入账）
-                record_call(usage_ledger, "generate", "primary", None,
-                            est_prompt=_estimate_prompt_tokens(prompt, question_for_prompt),
-                            est_completion=estimate_tokens("".join(parts)))
-                # 【v3.18】尚未产出任何 token 且属限流/模型过载类错误 → 备用模型重新流式生成；
-                # 已有部分 token 时换模型续写会前后不一致，维持 error 事件收尾
-                fb_model = LLM_CONFIG.get("fallback_model")
-                if not parts and fb_model and error_event["code"] in ("rate_limited", "server_error"):
-                    logger.warning("[兜底] 主模型%s，流式切换备用模型 %s", error_event["code"], fb_model)
-                    try:
-                        chain = prompt | get_llm_fallback()
-                        for chunk in chain.stream({"question": question_for_prompt}):
-                            tu = (getattr(chunk, "response_metadata", None) or {}).get("token_usage") or {}
-                            if tu.get("total_tokens"):
-                                stream_usage = {
-                                    "prompt_tokens": int(tu.get("prompt_tokens") or 0),
-                                    "completion_tokens": int(tu.get("completion_tokens") or 0),
-                                    "total_tokens": int(tu.get("total_tokens") or 0),
-                                }
-                            delta = chunk.content or ""
-                            if delta:
-                                parts.append(delta)
-                                yield {"type": "token", "delta": delta}
-                        answer = "".join(parts)
-                        pipeline_desc += "+fallback"
-                        record_call(usage_ledger, "generate", fb_model, stream_usage,
-                                    est_prompt=_estimate_prompt_tokens(prompt, question_for_prompt),
-                                    est_completion=estimate_tokens(answer))
-                    except Exception as e2:
-                        logger.error("[兜底] 备用模型 %s 也失败: %s", fb_model, e2)
-                        error_event = _llm_error_event(e2)
+            if not sources:
+                # 【v3.23】空来源拦截（流式）：召回结果被异常清空时不再生成（不调 LLM），
+                # 直接转兜底话术；主尾部照常落账（cache.put 对空 sources 内部忽略）
+                logger.warning("[空来源拦截] 流式 sources 为空，未生成先转兜底 q=%s", question[:30])
+                answer = P["fallback_answer"] + _auto_create_ticket(session_id, question, rewritten, results, kb_id)
+                error_class = "empty_sources"
+                for ch in answer:
+                    yield {"type": "token", "delta": ch}
+            else:
+                prompt = _build_rag_messages(history, results, question_for_prompt, profile=P)
+                chain = prompt | get_llm()
+                stream_usage = None  # 【v3.22】最后分片的真实 usage（兼容端点通常不带，则走估算）
+                try:
+                    for chunk in chain.stream({"question": question_for_prompt}):
+                        tu = (getattr(chunk, "response_metadata", None) or {}).get("token_usage") or {}
+                        if tu.get("total_tokens"):
+                            stream_usage = {
+                                "prompt_tokens": int(tu.get("prompt_tokens") or 0),
+                                "completion_tokens": int(tu.get("completion_tokens") or 0),
+                                "total_tokens": int(tu.get("total_tokens") or 0),
+                            }
+                        delta = chunk.content or ""
+                        if delta:
+                            parts.append(delta)
+                            yield {"type": "token", "delta": delta}
+                    answer = "".join(parts)
+                    _record_llm_usage(usage_ledger, "generate", "primary", prompt,
+                                      {"question": question_for_prompt},
+                                      _UsageProxy(answer, stream_usage))
+                except Exception as e:
+                    # v3.10：LLM 生成失败（429/5xx/超时/连接失败）不再把"抱歉"文案伪装成回答，
+                    # 改推结构化 error 事件让前端停止 loading 并显示错误气泡，杜绝无限转圈
+                    logger.error("流式大模型调用失败: %s", e)
+                    error_event = _llm_error_event(e)
+                    # 【v3.22】失败调用也记账（已产出部分按估算，诚实入账）
+                    record_call(usage_ledger, "generate", "primary", None,
+                                est_prompt=_estimate_prompt_tokens(prompt, question_for_prompt),
+                                est_completion=estimate_tokens("".join(parts)))
+                    # 【v3.18】尚未产出任何 token 且属限流/模型过载类错误 → 备用模型重新流式生成；
+                    # 已有部分 token 时换模型续写会前后不一致，维持 error 事件收尾
+                    fb_model = LLM_CONFIG.get("fallback_model")
+                    if not parts and fb_model and error_event["code"] in ("rate_limited", "server_error"):
+                        logger.warning("[兜底] 主模型%s，流式切换备用模型 %s", error_event["code"], fb_model)
+                        try:
+                            chain = prompt | get_llm_fallback()
+                            for chunk in chain.stream({"question": question_for_prompt}):
+                                tu = (getattr(chunk, "response_metadata", None) or {}).get("token_usage") or {}
+                                if tu.get("total_tokens"):
+                                    stream_usage = {
+                                        "prompt_tokens": int(tu.get("prompt_tokens") or 0),
+                                        "completion_tokens": int(tu.get("completion_tokens") or 0),
+                                        "total_tokens": int(tu.get("total_tokens") or 0),
+                                    }
+                                delta = chunk.content or ""
+                                if delta:
+                                    parts.append(delta)
+                                    yield {"type": "token", "delta": delta}
+                            answer = "".join(parts)
+                            pipeline_desc += "+fallback"
+                            record_call(usage_ledger, "generate", fb_model, stream_usage,
+                                        est_prompt=_estimate_prompt_tokens(prompt, question_for_prompt),
+                                        est_completion=estimate_tokens(answer))
+                        except Exception as e2:
+                            logger.error("[兜底] 备用模型 %s 也失败: %s", fb_model, e2)
+                            error_event = _llm_error_event(e2)
+                            log_qa(session_id, question, rewritten, sources,
+                                   f"[生成失败:{error_event['code']}] {error_event['message']}",
+                                   (time.time() - start_time) * 1000, kb_id, pipeline_desc + "+llm_error",
+                                   error_class=_ERROR_CLASS_MAP.get(error_event["code"], "generation_error"),
+                                   rerank_top_score=retrieval_fields["rerank_top_score"],
+                                   retrieved_count=retrieval_fields["retrieved_count"],
+                                   token_usage=summarize_usage(usage_ledger))
+                            abort_save = True  # 失败路径不把残缺内容落历史（v3.10 行为）
+                            yield error_event
+                            return
+                    else:
                         log_qa(session_id, question, rewritten, sources,
                                f"[生成失败:{error_event['code']}] {error_event['message']}",
                                (time.time() - start_time) * 1000, kb_id, pipeline_desc + "+llm_error",
@@ -739,17 +769,6 @@ def chat_single_turn_stream(session_id: str, question: str, kb_id: str = None):
                         abort_save = True  # 失败路径不把残缺内容落历史（v3.10 行为）
                         yield error_event
                         return
-                else:
-                    log_qa(session_id, question, rewritten, sources,
-                           f"[生成失败:{error_event['code']}] {error_event['message']}",
-                           (time.time() - start_time) * 1000, kb_id, pipeline_desc + "+llm_error",
-                           error_class=_ERROR_CLASS_MAP.get(error_event["code"], "generation_error"),
-                           rerank_top_score=retrieval_fields["rerank_top_score"],
-                           retrieved_count=retrieval_fields["retrieved_count"],
-                           token_usage=summarize_usage(usage_ledger))
-                    abort_save = True  # 失败路径不把残缺内容落历史（v3.10 行为）
-                    yield error_event
-                    return
 
         # 生成成功（未被错误分支提前 return）才写缓存；兜底回答 sources=[] 会被 put 内部忽略
         if cache:

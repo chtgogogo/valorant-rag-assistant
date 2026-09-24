@@ -1,0 +1,397 @@
+{
+  "cases": [
+    {
+      "id": "V02",
+      "type": "错别字",
+      "question": "包徒多少钱？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "狂徒"
+      ],
+      "note": "更离谱的错别字，预期可能失败——失败即发现检索容错边界"
+    },
+    {
+      "id": "R03",
+      "type": "术语变体",
+      "question": "Blade Storm大招怎么刷新？",
+      "expected_docs": [
+        "无畏契约英雄介绍.md"
+      ],
+      "expected_keywords": [
+        "击杀",
+        "飞刀"
+      ],
+      "reference_answer": "Blade Storm（飓刃）是捷风的大招：装备5把飞刀，每击杀一名敌人飞刀立即回满刷新；左键精准单发，右键三连发，爆头即死。"
+    },
+    {
+      "id": "V07",
+      "type": "英文ID",
+      "question": "Vandal和Phantom有什么区别？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "狂徒",
+        "幻影"
+      ],
+      "note": "双英文武器名，测多实体检索"
+    },
+    {
+      "id": "X04",
+      "type": "拒答陷阱",
+      "question": "CS2 的 AK47 多少钱？",
+      "expect_refusal": true,
+      "note": "最毒陷阱：KB 里 AK=狂徒别名，检索层极易误召回后瞎答；用户拍板期望=拒答"
+    },
+    {
+      "id": "W03",
+      "type": "武器事实",
+      "question": "短喷有什么特点？适合什么场景使用？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "近距离",
+        "两发"
+      ],
+      "reference_answer": "短炮（Shorty，俗称短喷）是300信用点的副武器霰弹枪，适合极近距离偷袭，7米内两发就能放倒敌人，距离一远伤害骤降。"
+    },
+    {
+      "id": "H04",
+      "type": "英雄事实",
+      "question": "无畏契约里英雄分为哪几个定位？",
+      "expected_docs": [
+        "无畏契约英雄介绍.md"
+      ],
+      "expected_keywords": [
+        "决斗",
+        "先锋",
+        "烟位",
+        "哨位"
+      ],
+      "reference_answer": "无畏契约英雄分四个定位：决斗（突破手）、先锋（信息与开团）、控场/烟位（区域封锁）、哨位（防守与侧翼）。"
+    },
+    {
+      "id": "B06",
+      "type": "黑话别名",
+      "question": "火男是哪个国家的英雄？",
+      "expected_docs": [
+        "无畏契约英雄介绍.md"
+      ],
+      "expected_keywords": [
+        "英国"
+      ]
+    },
+    {
+      "id": "W01",
+      "type": "武器事实",
+      "question": "正义手枪多少钱？伤害是多少？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "800",
+        "55",
+        "159"
+      ],
+      "reference_answer": "正义（Sheriff）手枪价格800信用点，30米内身体伤害55、爆头伤害159.5，一发爆头可击杀无甲目标。"
+    },
+    {
+      "id": "X01",
+      "type": "拒答测试",
+      "question": "今天天气怎么样？",
+      "expected_docs": [],
+      "expected_keywords": [],
+      "expect_refusal": true
+    },
+    {
+      "id": "H02",
+      "type": "英雄事实",
+      "question": "捷风的大招飓刃有什么效果？",
+      "expected_docs": [
+        "无畏契约英雄介绍.md"
+      ],
+      "expected_keywords": [
+        "飞刀",
+        "5把"
+      ],
+      "reference_answer": "捷风的大招飓刃（Blade Storm）装备5把飞刀，左键精准掷出、右键三连发，击杀敌人后飞刀回满，爆头一击致命。"
+    },
+    {
+      "id": "M05",
+      "type": "多轮指代",
+      "history": [
+        {
+          "role": "user",
+          "content": "蜂刺适合什么距离？"
+        },
+        {
+          "role": "assistant",
+          "content": "蜂刺（Stinger）1100信用点，15米内伤害高，适合近距离泼水。"
+        }
+      ],
+      "question": "那正面刚枪呢？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": []
+    },
+    {
+      "id": "X05",
+      "type": "拒答陷阱",
+      "question": "推荐一个好用的游戏耳机？",
+      "expect_refusal": true
+    },
+    {
+      "id": "H03",
+      "type": "英雄事实",
+      "question": "不死鸟是哪个国家的英雄？",
+      "expected_docs": [
+        "无畏契约英雄介绍.md"
+      ],
+      "expected_keywords": [
+        "英国"
+      ],
+      "reference_answer": "不死鸟（Phoenix）来自英国。"
+    },
+    {
+      "id": "V04",
+      "type": "俗称",
+      "question": "加特林的伤害是多少？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "奥丁"
+      ],
+      "note": "加特林=俗称的奥丁(Odin机枪)，测俗称映射"
+    },
+    {
+      "id": "M04",
+      "type": "多轮指代",
+      "history": [
+        {
+          "role": "user",
+          "content": "无畏契约英雄分几个定位？"
+        },
+        {
+          "role": "assistant",
+          "content": "分为决斗、先锋、控场/烟位、哨位四个定位。"
+        }
+      ],
+      "question": "决斗位都有谁？",
+      "expected_docs": [
+        "无畏契约英雄介绍.md"
+      ],
+      "expected_keywords": [
+        "捷风"
+      ]
+    },
+    {
+      "id": "V08",
+      "type": "常识边界",
+      "question": "韩国人角色有哪些？",
+      "expected_docs": [
+        "无畏契约英雄介绍.md"
+      ],
+      "expected_keywords": [
+        "韩国"
+      ],
+      "note": "按国籍聚合查询，测知识库跨条目回答能力"
+    },
+    {
+      "id": "B01",
+      "type": "黑话别名",
+      "question": "冥驹多少钱？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "4700"
+      ]
+    },
+    {
+      "id": "T01",
+      "type": "玩法常识",
+      "question": "新手应该怎么选择自己的定位？",
+      "expected_docs": [
+        "无畏契约英雄介绍.md"
+      ],
+      "expected_keywords": [
+        "决斗"
+      ],
+      "reference_answer": "新手建议先从一两个定位练起：想练枪法刚枪可选决斗，喜欢配合可选先锋或烟位；先专注1~2个英雄建立熟练度，再逐步扩展英雄池。"
+    },
+    {
+      "id": "B04",
+      "type": "黑话别名",
+      "question": "免费枪指的是哪把？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "标配"
+      ]
+    },
+    {
+      "id": "H05",
+      "type": "英雄事实",
+      "question": "捷风是哪个国家的？",
+      "expected_docs": [
+        "无畏契约英雄介绍.md"
+      ],
+      "expected_keywords": [
+        "韩国"
+      ],
+      "reference_answer": "捷风（Jett）来自韩国。"
+    },
+    {
+      "id": "X07",
+      "type": "边界观察",
+      "question": "无畏契约手游上线了吗？",
+      "observe": true,
+      "note": "知识库可能提及手游，期望行为人工复核"
+    },
+    {
+      "id": "R01",
+      "type": "术语变体",
+      "question": "Sheriff这把枪怎么样？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "正义",
+        "800"
+      ],
+      "reference_answer": "Sheriff中文名正义，800信用点的重管手枪，伤害极高（30米内身体55、爆头159.5），一发爆头可击杀无甲敌人，是eco局翻盘利器，但后坐力大、射速慢。"
+    },
+    {
+      "id": "W04",
+      "type": "武器事实",
+      "question": "狂怒手枪是半自动还是全自动的？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "全自动",
+        "450"
+      ],
+      "reference_answer": "狂怒（Frenzy）是450信用点的全自动手枪，近距离泼水能力强，20米内身体伤害26、爆头78。"
+    },
+    {
+      "id": "M03",
+      "type": "多轮指代",
+      "history": [
+        {
+          "role": "user",
+          "content": "幽影怎么玩？"
+        },
+        {
+          "role": "assistant",
+          "content": "幽影（Omen）是控场英雄，核心是传送绕后和烟球封锁视野。"
+        }
+      ],
+      "question": "他的传送怎么用？",
+      "expected_docs": [
+        "无畏契约英雄介绍.md"
+      ],
+      "expected_keywords": [
+        "传送"
+      ]
+    },
+    {
+      "id": "B05",
+      "type": "黑话别名",
+      "question": "保安的摄像头怎么用？",
+      "expected_docs": [
+        "无畏契约英雄介绍.md"
+      ],
+      "expected_keywords": [
+        "摄像头"
+      ]
+    },
+    {
+      "id": "B07",
+      "type": "黑话别名",
+      "question": "三包点的图是哪一张？",
+      "expected_docs": [
+        "无畏契约地图攻略.md"
+      ],
+      "expected_keywords": [
+        "隐世修所"
+      ]
+    },
+    {
+      "id": "W02",
+      "type": "武器事实",
+      "question": "鬼魅的爆头伤害和价格分别是多少？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "500",
+        "105"
+      ],
+      "reference_answer": "鬼魅（Ghost）手枪价格500信用点，30米内身体伤害30、爆头伤害105，消音且精准。"
+    },
+    {
+      "id": "B08",
+      "type": "黑话别名",
+      "question": "冰箱图怎么打？",
+      "expected_docs": [
+        "无畏契约地图攻略.md"
+      ],
+      "expected_keywords": [
+        "森寒冬港"
+      ]
+    },
+    {
+      "id": "X06",
+      "type": "边界观察",
+      "question": "怎么报名无畏契约职业队？",
+      "observe": true,
+      "note": "权威资料导航含电竞体系内容，期望行为人工复核"
+    },
+    {
+      "id": "X02",
+      "type": "拒答测试",
+      "question": "帮我写一段Python代码",
+      "expected_docs": [],
+      "expected_keywords": [],
+      "expect_refusal": true
+    },
+    {
+      "id": "M02",
+      "type": "多轮指代",
+      "history": [
+        {
+          "role": "user",
+          "content": "正义手枪多少钱？"
+        },
+        {
+          "role": "assistant",
+          "content": "正义（Sheriff）价格800信用点，30米内身体伤害55、爆头伤害159.5。"
+        }
+      ],
+      "question": "那爆头伤害呢？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "159"
+      ]
+    }
+  ],
+  "meta": {
+    "purpose": "调参集：调参/迭代只准看这份（v3.23 冻结切分 seed=42）",
+    "seed": 42,
+    "from": [
+      "eval_set.json",
+      "eval_set_variants.json",
+      "eval_set_l2.json"
+    ],
+    "n": 31
+  }
+}

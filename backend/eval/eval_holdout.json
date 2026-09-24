@@ -1,0 +1,183 @@
+{
+  "cases": [
+    {
+      "id": "V05",
+      "type": "港台译名",
+      "question": "瑟符的技能是什么？",
+      "expected_docs": [
+        "无畏契约英雄介绍.md"
+      ],
+      "expected_keywords": [
+        "零"
+      ],
+      "note": "瑟符=Cypher台服名，知识库只有'零'——预期暴露译名覆盖缺口，结果可作为补知识库的证据"
+    },
+    {
+      "id": "X08",
+      "type": "拒答陷阱",
+      "question": "帮我写一段请假条。",
+      "expect_refusal": true
+    },
+    {
+      "id": "V01",
+      "type": "错别字",
+      "question": "爆徒的伤害是多少？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "狂徒"
+      ],
+      "note": "爆徒≈狂徒(Vandal)错别字，测BM25+向量能否纠正"
+    },
+    {
+      "id": "B02",
+      "type": "黑话别名",
+      "question": "骇灵的价格是多少？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "1600"
+      ]
+    },
+    {
+      "id": "R02",
+      "type": "术语变体",
+      "question": "Jett的技能怎么用？",
+      "expected_docs": [
+        "无畏契约英雄介绍.md"
+      ],
+      "expected_keywords": [
+        "捷风"
+      ],
+      "reference_answer": "Jett中文名捷风，韩国决斗位英雄：C操云术投掷烟球，Q凌空腾空，E顺风冲刺，大招飓刃掷飞刀；核心玩法是利用高机动性抢点、拉扯与收割。"
+    },
+    {
+      "id": "B03",
+      "type": "黑话别名",
+      "question": "判官是什么类型的枪？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "霰弹"
+      ]
+    },
+    {
+      "id": "X03",
+      "type": "拒答测试",
+      "question": "红烧肉怎么做才好吃？",
+      "expected_docs": [],
+      "expected_keywords": [],
+      "expect_refusal": true
+    },
+    {
+      "id": "W05",
+      "type": "武器事实",
+      "question": "重型护甲多少钱？提供多少护甲值？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "1000",
+        "50"
+      ],
+      "reference_answer": "重型护甲价格1000信用点，提供50点护甲值，能大幅降低被一枪爆头的风险。"
+    },
+    {
+      "id": "H01",
+      "type": "英雄事实",
+      "question": "捷风的E技能是什么？消耗多少？",
+      "expected_docs": [
+        "无畏契约英雄介绍.md"
+      ],
+      "expected_keywords": [
+        "顺风",
+        "冲刺"
+      ],
+      "reference_answer": "捷风的E技能是顺风（Tailwind），按E向移动方向瞬间冲刺，用于快速拉扯、抢点和躲弹。"
+    },
+    {
+      "id": "T04",
+      "type": "玩法常识",
+      "question": "手枪局买什么手枪比较好？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "鬼魅",
+        "标"
+      ],
+      "reference_answer": "手枪局推荐买鬼魅（Ghost，500）这类精准消音手枪，它是手枪局标配之一；也可以不起枪保经济，全队统一规划最重要。"
+    },
+    {
+      "id": "T03",
+      "type": "玩法常识",
+      "question": "哪把枪可以一枪爆头击杀有甲敌人？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "正义",
+        "蜂刺"
+      ],
+      "reference_answer": "无畏契约里面对有甲敌人仍能一枪爆头击杀的主要是正义（Sheriff，爆头159.5）和近距离的蜂刺（Stinger），前提是把准星放在头上。"
+    },
+    {
+      "id": "T02",
+      "type": "玩法常识",
+      "question": "什么样的武器适合经济局买？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "经济"
+      ],
+      "reference_answer": "经济局预算有限，一般只买便宜手枪（如鬼魅、狂怒）或不起枪攒钱，保证下一轮能全队强起；关键是全队统一经济决策。"
+    },
+    {
+      "id": "M01",
+      "type": "多轮指代",
+      "history": [
+        {
+          "role": "user",
+          "content": "捷风的E技能是什么？"
+        },
+        {
+          "role": "assistant",
+          "content": "捷风的E技能是顺风（Tailwind），向移动方向瞬间冲刺，用于快速拉扯和躲弹。"
+        }
+      ],
+      "question": "它的大招呢？",
+      "expected_docs": [
+        "无畏契约英雄介绍.md"
+      ],
+      "expected_keywords": [
+        "飓刃"
+      ]
+    },
+    {
+      "id": "V03",
+      "type": "拼音",
+      "question": "baotu的伤害是多少？",
+      "expected_docs": [
+        "无畏契约武器图鉴.md"
+      ],
+      "expected_keywords": [
+        "狂徒"
+      ],
+      "note": "拼音输入，预期大概率失败——BM25对拼音无能为力，向量看语义映射"
+    }
+  ],
+  "meta": {
+    "purpose": "冻结盲集：对外汇报数字只认这份（调参不得触碰）",
+    "seed": 42,
+    "from": [
+      "eval_set.json",
+      "eval_set_variants.json",
+      "eval_set_l2.json"
+    ],
+    "n": 14
+  }
+}
