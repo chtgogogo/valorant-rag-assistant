@@ -61,6 +61,12 @@ class TestRateLimit:
     def test_send_endpoint_returns_429(self, client, monkeypatch):
         """超限后 /api/chat/send 返回 429。"""
         monkeypatch.setitem(RATE_LIMIT_CONFIG, "per_minute", 1)
+        # 【v3.27 修复】r1 必须快速返回：真实管线含模型加载/HF在线校验（实测可超 60s），
+        # r2 到达时窗口已滚动过期 → 429 断言间歇性失败。本测试只测入口限流，
+        # mock 掉管线（路由在函数内延迟 import，patch 源头即可生效）。
+        import services.chat_service as cs
+        monkeypatch.setattr(cs, "chat_single_turn",
+                            lambda sid, q, kb: ("答案", [], []))
         payload = {"session_id": "rl-test", "question": "什么是爆头线", "kb_id": "valorant"}
         headers = {"X-Forwarded-For": "10.0.0.99"}
         # 第一次进入限流窗口（后续链路无需真实 LLM——429 判定在入口）

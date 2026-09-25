@@ -31,6 +31,36 @@
 **部署口径**：`git pull && cd frontend && npm run build && 重启后端`（前端产物变更必须重新 build）。
 
 
+## v3.27（2026-09-25）· Docker 部署真机验证 + 项目收口
+
+> 版本号说明：任务卡原定本阶段为 v3.26，但该号已被成本防护提交（v3.26）占用，收口顺延为 v3.27。
+
+**优化了哪些地方**
+1. **部署工程化**：根 `Dockerfile`（Python 3.12-slim，依赖层分离，知识库随镜像分发）与
+   `frontend/Dockerfile`（Node 22 构建 + Nginx 1.27 托管）；`frontend/nginx.conf` 反代 /api
+   并关闭缓冲（SSE 逐字推送不被 nginx 攒包）；根 `.dockerignore` 把运行时数据/密钥挡在镜像外。
+2. **编排与持久化**：`docker-compose.yml` 双服务编排（显式项目名，兼容中文目录）；
+   `ZHIPU_API_KEY` 经 env_file 运行时注入、绝不进镜像；会话/审计/上传、向量库、模型缓存
+   三类 named volume 重启不丢；backend healthcheck（start_period 覆盖首次模型下载），
+   frontend 等 backend 健康后启动；`HF_HUB_OFFLINE=1`（模型就位后开启）免疫 hf-mirror 抖动。
+3. **部署知识沉淀**：`docs/部署验证清单.md` 九步可复跑（每步命令+预期+常见问题含 GPU 指引）；
+   README「快速开始」新增 Docker 一键启动；更新记录补齐 v3.20~v3.27。
+
+**新增了什么**
+- `Dockerfile` / `docker-compose.yml` / `.dockerignore` / `frontend/Dockerfile` / `frontend/nginx.conf`。
+
+**解决了什么问题（真机验证证据，2026-09-25 Docker Desktop 29.6.2）**
+- 整套启动：双容器 running（backend healthy）；容器内建库 12 文档 112 块与宿主一致；
+- 真实问答 ×2：官方直答 200（"全部英雄（共 29 位）"）；流式 RAG SSE 278 事件全收；
+- 会话恢复：/api/chat/history 返回 4 条历史；nginx 反代 /api 业务接口 200；
+- 审计落卷增长（含哈希链字段）；backend 重启后历史与审计完好（卷持久化生效）；
+- 回归：pytest 全量 165 用例绿；修 1 个环境级 flaky 测试（限流 429 测试的 r1 走真实管线
+  超 60s 致窗口过期，现 mock 管线只测入口限流）；
+- 遗留说明：首次提问需下载模型（embedding 184M + reranker 1.1G，落 hf_cache 卷只下一次；
+  内网可从宿主 `D:\huggingface_cache\hub` docker cp 导入后开离线模式）；镜像约 10GB
+  （torch 自带 CUDA 库，与宿主 GPU/CPU 自动切换行为一致，容器默认 CPU，GPU 直通见清单）。
+
+
 ## v3.25（2026-09-25）· 并发加固：模型单例锁 + RRF 唯一键 + bge 前缀消融 + 预处理去重 + 并发压测
 
 > 版本号说明：并行窗口曾以"v3.26"名义先行提交成本防护（见下方条目），与本阶段无代码

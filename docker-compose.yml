@@ -1,0 +1,55 @@
+# 无畏契约 RAG 助手 · 一键部署（后端 + 前端）
+# ------------------------------------------------------------
+# 用法：
+#   1. 复制 .env.example 为 .env 并填入 ZHIPU_API_KEY（密钥不进镜像）
+#   2. docker compose up -d --build
+#   3. 前端 http://localhost:5174  后端 http://localhost:8001/docs
+# 数据持久化：named volumes（chat_history/audit/uploads/chroma/hf_cache），
+# 容器重建不丢数据；彻底清库：docker compose down -v
+# ------------------------------------------------------------
+name: valorant-rag
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: valorant-rag-backend
+    env_file:
+      - .env
+    environment:
+      - EMBEDDING_DEVICE=cpu          # 容器内默认 CPU（宿主 GPU 直通需 nvidia runtime，按需开启）
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8001
+      - HF_HUB_OFFLINE=1              # 模型走本地 hf_cache 卷（docker cp 导入或首跑下载完成后开启），
+                                      # 不再联网校验 etag——免疫 hf-mirror 抖动；首次部署下载模型时先注释本行
+    ports:
+      - "8001:8001"
+    volumes:
+      - backend_data:/app/backend/data          # 会话历史/审计/上传/语义缓存epoch
+      - chroma_data:/app/backend/data/chroma_db # 向量库持久化
+      - hf_cache:/root/.cache/huggingface       # 模型权重缓存（重建容器不重复下载）
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8001/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 120s   # 首次启动要下载模型，放宽
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: valorant-rag-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "5174:80"
+    restart: unless-stopped
+
+volumes:
+  backend_data:
+  chroma_data:
+  hf_cache:
