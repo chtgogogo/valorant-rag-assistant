@@ -124,9 +124,10 @@ def get_ticket(ticket_id: str) -> dict | None:
 
 def feed_ticket_to_kb(ticket: dict) -> str:
     """把人工标准答案回流入知识库：组成 FAQ 块，复用向量入库链路。
-    :return: 生成的 doc_id"""
-    from services.document_service import split_text, _load_doc_list, _save_doc_list
-    from services.vector_service import add_chunks
+    【v3.30】幂等化：同一工单重复回流（编辑答案重发）先清掉旧回流块与旧注册表记录，
+    不再产生重复文档。:return: 生成的 doc_id"""
+    from services.document_service import split_text, _get_doc_list_lock, _load_doc_list, _save_doc_list
+    from services.vector_service import add_chunks, delete_doc_vectors
 
     kb_id = ticket["kb_id"]
     doc_name = f"工单回流_{ticket['id'][:11]}.md"
@@ -136,22 +137,27 @@ def feed_ticket_to_kb(ticket: dict) -> str:
             f"（来源：人工客服工单，处理时间 {ticket.get('resolved_at') or _now()}）")
     pieces = split_text(text) or [text]
     doc_id = f"tkdoc_{ticket['id'][:12]}"
-    chunks = [DocumentChunk(
-        content=p,
-        metadata={"doc_id": doc_id, "doc_name": doc_name, "kb_id": kb_id},
-    ) for p in pieces]
-    if not add_chunks(chunks, kb_id):
-        raise RuntimeError("向量入库失败，工单未回流")
-    # 记入文档清单，知识库管理页可见可删
-    doc_list = _load_doc_list(kb_id)
-    doc_list.append({
-        "doc_id": doc_id,
-        "doc_name": doc_name,
-        "upload_time": _now(),
-        "chunk_count": len(chunks),
-        "origin": "ticket_feedback",
-    })
-    _save_doc_list(kb_id, doc_list)
+
+    # 幂等前置：清掉本工单上一次回流的向量块与注册表记录（编辑重发场景）
+    delete_doc_vectors(doc_id, kb_id)
+    with _get_doc_list_lock(kb_id):
+        doc_list = [d for d in _load_doc_list(kb_id) if d.get("doc_id") != doc_id]
+
+        chunks = [DocumentChunk(
+            content=p,
+            metadata={"doc_id": doc_id, "doc_name": doc_name, "kb_id": kb_id},
+        ) for p in pieces]
+        if not add_chunks(chunks, kb_id):
+            raise RuntimeError("向量入库失败，工单未回流")
+        # 记入文档清单，知识库管理页可见可删
+        doc_list.append({
+            "doc_id": doc_id,
+            "doc_name": doc_name,
+            "upload_time": _now(),
+            "chunk_count": len(chunks),
+            "origin": "ticket_feedback",
+        })
+        _save_doc_list(kb_id, doc_list)
     return doc_id
 
 

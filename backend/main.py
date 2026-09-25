@@ -31,16 +31,23 @@ from routers.chat_router import chat_router
 from routers.ticket_router import ticket_router
 from routers.feedback_router import feedback_router
 from routers.domain_router import domain_router
+from utils.auth import verify_api_key, verify_admin
 # 企业化预留：AUTH_ENABLED=1 时所有 /api 接口要求 X-API-Key 请求头
-app.include_router(doc_router, prefix="/api/document", tags=["知识库文档"], dependencies=[Depends(verify_api_key)])
+# 【v3.30】管理类路由（知识库修改/工单处理）额外叠加 verify_admin（X-Admin-Key）：
+# 未配置 ADMIN_PASSWORD 时这些接口全部 403，防止任何人打开页面就污染知识库/乱处理工单
+app.include_router(doc_router, prefix="/api/document", tags=["知识库文档"],
+                   dependencies=[Depends(verify_api_key), Depends(verify_admin)])
 app.include_router(vector_router, prefix="/api/vector", tags=["向量检索"], dependencies=[Depends(verify_api_key)])
 app.include_router(chat_router, prefix="/api/chat", tags=["对话业务"], dependencies=[Depends(verify_api_key)])
-app.include_router(ticket_router, prefix="/api/ticket", tags=["售后工单"], dependencies=[Depends(verify_api_key)])
+app.include_router(ticket_router, prefix="/api/ticket", tags=["售后工单"],
+                   dependencies=[Depends(verify_api_key), Depends(verify_admin)])
 app.include_router(feedback_router, prefix="/api/feedback", tags=["用户反馈"], dependencies=[Depends(verify_api_key)])
 app.include_router(domain_router, prefix="/api/domain", tags=["领域切换"], dependencies=[Depends(verify_api_key)])
 
 # 审计日志查询接口（运维排查用）；【v3.12】补挂鉴权，与其他六个路由同款——审计存用户问答原文，不能裸奔
-@app.get("/api/audit/recent", tags=["审计日志"], summary="查询最近N天问答审计记录", dependencies=[Depends(verify_api_key)])
+# 【v3.30】叠加管理密码（审计含全部用户问答，同管理数据）
+@app.get("/api/audit/recent", tags=["审计日志"], summary="查询最近N天问答审计记录",
+         dependencies=[Depends(verify_api_key), Depends(verify_admin)])
 def recent_audit(days: int = 7):
     from utils.audit import read_recent_audit
     return {"code": 200, "msg": "success", "data": read_recent_audit(days)}

@@ -74,7 +74,14 @@
                 </button>
                 <button class="action-btn close" @click="handleClose(t)" :disabled="acting === t.id">关闭</button>
               </template>
-              <span v-else class="cell-dim">{{ t.fed_back ? '已回流' : '—' }}</span>
+              <template v-else-if="t.status === 'resolved'">
+                <span class="cell-dim cell-inline">{{ t.fed_back ? '已回流' : '未回流' }}</span>
+                <!-- 【v3.30】已解决工单可编辑答案重发（幂等回流：旧答案自动被替换） -->
+                <button class="action-btn edit" @click="handleEdit(t)" :disabled="acting === t.id">
+                  {{ acting === t.id ? '保存中' : '编辑' }}
+                </button>
+              </template>
+              <span v-else class="cell-dim">—</span>
             </span>
           </div>
         </div>
@@ -139,6 +146,8 @@ import {
   closeTicket,
   getRecentAudit,
   getRecentFeedback,
+  clearAdminKey,
+  setAdminKey,
 } from '../api.js'
 
 const emit = defineEmits(['back'])
@@ -186,6 +195,12 @@ async function loadAll() {
       feedbacks.value = fbRes.data.data?.feedback || []
     }
   } catch (e) {
+    if (e?.response?.status === 403) {
+      clearAdminKey()
+      ElMessage.error(e?.response?.data?.detail || '管理密码错误，请重新验证')
+      emit('back') // 退回对话页，重新点"管理"会再弹密码框
+      return
+    }
     ElMessage.error('加载运营数据失败，请检查后端服务')
   } finally {
     loading.value = false
@@ -210,12 +225,14 @@ async function loadTickets() {
   }
 }
 
-async function handleResolve(t) {
+async function handleResolve(t, presetAnswer = '') {
   let answer
   try {
     const r = await ElMessageBox.prompt(`为「${t.question}」填写标准答案：`, '处理工单', {
       confirmButtonText: '下一步',
       cancelButtonText: '取消',
+      inputType: 'textarea',
+      inputValue: presetAnswer, // 【v3.30】失败重试时保留上次输入，不白写
       inputPlaceholder: '输入人工标准答案（不能为空）',
       inputValidator: (v) => (v && v.trim() ? true : '标准答案不能为空'),
     })
@@ -240,13 +257,80 @@ async function handleResolve(t) {
       ElMessage.success(res.data.msg || '工单已处理')
       await Promise.all([loadTickets(), loadStats()])
     } else {
+      // 【v3.30】失败保留输入并说明原因，而不是清空报错
       ElMessage.error(res.data?.msg || '处理失败')
+      handleResolve(t, answer)
     }
   } catch (e) {
-    ElMessage.error('处理失败，请检查网络或后端服务')
+    const detail = e?.response?.data?.detail
+    if (e?.response?.status === 403) {
+      clearAdminKey()
+      ElMessage.error(detail || '管理密码错误，请重新验证')
+      await repromptAdminKey()
+      handleResolve(t, answer) // 密码修正后自动重试（输入保留）
+      return
+    }
+    ElMessage.error(detail || '处理失败，请检查网络或后端服务')
+    handleResolve(t, answer) // 重新弹框保留输入，用户可直接重试
+    return
   } finally {
     acting.value = ''
   }
+}
+
+// 【v3.30】编辑已解决工单：预填当前答案，重新提交即覆盖回流（后端幂等）
+async function handleEdit(t) {
+  let answer
+  try {
+    const r = await ElMessageBox.prompt(
+      `修改「${t.question}」的标准答案（保存后会重新回流知识库，替换旧答案）：`,
+      '编辑工单答案',
+      {
+        confirmButtonText: '保存并重新回流',
+        cancelButtonText: '取消',
+        inputType: 'textarea',
+        inputValue: t.answer || '',
+        inputValidator: (v) => (v && v.trim() ? true : '标准答案不能为空'),
+      })
+    answer = r.value.trim()
+  } catch {
+    return
+  }
+  acting.value = t.id
+  try {
+    const res = await resolveTicket(t.id, answer, true)
+    if (res.data && res.data.code === 200) {
+      ElMessage.success('答案已更新并重新回流')
+      await Promise.all([loadTickets(), loadStats()])
+    } else {
+      ElMessage.error(res.data?.msg || '更新失败')
+    }
+  } catch (e) {
+    const detail = e?.response?.data?.detail
+    if (e?.response?.status === 403) {
+      clearAdminKey()
+      ElMessage.error(detail || '管理密码错误，请重新验证')
+      await repromptAdminKey()
+      handleEdit(t)
+      return
+    }
+    ElMessage.error(detail || '更新失败，请检查网络或后端服务')
+  } finally {
+    acting.value = ''
+  }
+}
+
+// 【v3.30】管理密码被拒（403）时弹框重新输入
+async function repromptAdminKey() {
+  try {
+    const r = await ElMessageBox.prompt('管理密码无效，请重新输入：', '管理员验证', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      inputType: 'password',
+      inputValidator: (v) => (v && v.trim() ? true : '请输入管理密码'),
+    })
+    setAdminKey(r.value.trim())
+  } catch { /* 用户取消：保持未验证状态 */ }
 }
 
 async function loadStats() {
@@ -572,9 +656,23 @@ onMounted(loadAll)
   border-color: rgba(139, 155, 171, 0.5);
 }
 
+.action-btn.edit {
+  border: 1px solid rgba(0, 212, 255, 0.35);
+  background: rgba(0, 212, 255, 0.08);
+  color: var(--val-accent);
+}
+
+.action-btn.edit:hover:not(:disabled) {
+  background: rgba(0, 212, 255, 0.18);
+}
+
 .action-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.cell-inline {
+  margin-right: 8px;
 }
 
 .empty-tip {

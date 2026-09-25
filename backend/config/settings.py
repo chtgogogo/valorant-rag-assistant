@@ -197,6 +197,15 @@ AUTH_ENABLED = compute_auth_enabled()
 API_KEYS = [k.strip() for k in os.getenv("API_KEYS", "").split(",") if k.strip()]
 
 # ------------------------------------------------------
+# 5.2.1 管理端密码（v3.30）：工单/知识库/审计等管理接口要求请求头
+#     X-Admin-Key 与 ADMIN_PASSWORD 一致（常量时间比较）。
+#     【fail-closed】未配置 ADMIN_PASSWORD 时管理接口全部 403——
+#     防止任何人打开页面就能处理工单/改知识库污染数据。
+#     本地演示：在 .env 里设 ADMIN_PASSWORD=你的密码 即可。
+# ------------------------------------------------------
+ADMIN_PASSWORD = (os.getenv("ADMIN_PASSWORD") or "").strip()
+
+# ------------------------------------------------------
 # 5.3 领域专属话术（全部来自领域皮肤配置，代码里不再写死）
 # ------------------------------------------------------
 APP_NAME = DOMAIN_PROFILE.get("app_name", "RAG 智能助手")

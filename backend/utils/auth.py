@@ -10,7 +10,7 @@ import hmac
 
 from fastapi import Header, HTTPException
 
-from config.settings import AUTH_ENABLED, API_KEYS
+from config.settings import AUTH_ENABLED, API_KEYS, ADMIN_PASSWORD
 
 
 def verify_api_key(x_api_key: str = Header(default="", alias="X-API-Key")):
@@ -22,3 +22,17 @@ def verify_api_key(x_api_key: str = Header(default="", alias="X-API-Key")):
             hmac.compare_digest(x_api_key.encode("utf-8"), k.encode("utf-8"))
             for k in API_KEYS):
         raise HTTPException(status_code=401, detail="API Key 无效或缺失")
+
+
+def verify_admin(x_admin_key: str = Header(default="", alias="X-Admin-Key")):
+    """【v3.30】FastAPI 依赖：管理接口（工单处理/知识库修改/审计查询）的管理员校验。
+    - ADMIN_PASSWORD 未配置 → 全部 403（fail-closed：管理功能默认锁死，防任何人污染数据）
+    - 密码用 hmac.compare_digest 常量时间比较（防时序侧信道）
+    前端：管理入口先弹密码框，通过后把 X-Admin-Key 带在后续请求头（localStorage 记忆）。"""
+    if not ADMIN_PASSWORD:
+        raise HTTPException(
+            status_code=403,
+            detail="管理功能未解锁：请在服务端 .env 配置 ADMIN_PASSWORD 后重启")
+    if not x_admin_key or not hmac.compare_digest(
+            x_admin_key.encode("utf-8"), ADMIN_PASSWORD.encode("utf-8")):
+        raise HTTPException(status_code=403, detail="管理密码错误")

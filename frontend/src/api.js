@@ -5,6 +5,24 @@ const api = axios.create({
   timeout: 120000,
 })
 
+// 【v3.30】管理密码（X-Admin-Key）：管理接口（工单/知识库/审计）需要。
+// 密码存在 localStorage——只是"记住"，安全由服务端校验兜底。
+const ADMIN_KEY_STORAGE = 'rag-admin-key'
+export function getAdminKey() {
+  return localStorage.getItem(ADMIN_KEY_STORAGE) || ''
+}
+export function setAdminKey(key) {
+  localStorage.setItem(ADMIN_KEY_STORAGE, key)
+}
+export function clearAdminKey() {
+  localStorage.removeItem(ADMIN_KEY_STORAGE)
+}
+api.interceptors.request.use((config) => {
+  const key = getAdminKey()
+  if (key) config.headers['X-Admin-Key'] = key
+  return config
+})
+
 // 发送消息
 export function sendMessage(sessionId, question, kbId = 'valorant') {
   return api.post('/chat/send', {
