@@ -653,6 +653,8 @@ async function handleRollback() {
   height: 100dvh; /* 【v3.28】动态视口：手机地址栏收缩时不再把底部输入框顶出屏幕 */
   display: flex;
   background: #06080a;
+  color: var(--val-text); /* 【v3.32.1】根容器兜底浅色文字：此前未声明，侧栏信息卡标题等
+                             漏设 color 的文字继承浏览器默认黑色，在深色背景上"漆黑隐身" */
   overflow: hidden;
 }
 
@@ -1035,6 +1037,8 @@ async function handleRollback() {
   padding-left: 10px;
   border-left: 3px solid var(--val-red);
   line-height: 1.2;
+  color: var(--val-text); /* 【v3.32.1】显式浅色：此标题漏设 color 曾继承浏览器默认黑色 */
+  letter-spacing: 0.5px;
 }
 
 .domain-info-card .info-desc {
