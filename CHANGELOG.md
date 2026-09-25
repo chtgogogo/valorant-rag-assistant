@@ -5,6 +5,24 @@
 
 ---
 
+## v3.30.1（2026-09-25）· 修复工单评测脚本语法错误（CI 红叉根因）
+
+**优化了哪些地方**
+- `backend/scripts/eval_ticket_loop.py:59`：answer 字符串里嵌了半角双引号
+  `"借""还"`，把 Python 字符串截断造成 SyntaxError——v3.29 引入，GitHub CI 的
+  `py_compile 全后端` 步骤红叉（run 36130526991）。改为中文引号“借”“还”。
+
+**解决了什么问题**
+- 主分支 CI 红叉；该脚本自 v3.29 起本地也无法运行（`python eval_ticket_loop.py` 直接报错）。
+- 盲区教训：本地 pytest 全绿不代表没事——tests/ 不导入 scripts/ 下的脚本，
+  语法错误只有全量编译检查（CI）或手动运行才能暴露。
+
+**怎么验证的**
+- `python -m compileall backend -q` 退出码 0（与 CI 同款门禁）；
+  `py_compile backend/scripts/eval_ticket_loop.py` 退出码 0。
+
+---
+
 ## v3.30（2026-09-25）· 管理密码门 + 工单回流修复（编辑/容错/幂等）
 
 **优化了哪些地方**
