@@ -59,7 +59,7 @@
          <div class="bg-gradient"></div>
        </div>
     <div class="bg-particles">
-      <div class="particle" v-for="n in 20" :key="n" :style="particleStyle(n)"></div>
+      <div class="particle" :class="{ teal: n % 4 === 0 }" v-for="n in 20" :key="n" :style="particleStyle(n)"></div>
     </div>
 
     <!-- 顶部标题栏 -->
@@ -759,25 +759,30 @@ async function handleRollback() {
   padding: 7px 12px 7px 34px;
   border-radius: var(--val-radius-sm);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.2s var(--ease-out-quart);
   font-size: 12.5px;
   color: var(--val-text-dim);
+  border-left: 2px solid transparent;
 }
 
 .cat-item:hover {
   background: var(--val-red-dim);
   color: var(--val-text);
+  border-left-color: var(--val-red);
+  transform: translateX(2px);
 }
 
 .item-badge {
   margin-left: auto;
   font-size: 10px;
-  padding: 1px 7px;
-  border-radius: 10px;
+  padding: 1px 8px;
+  clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
   background: rgba(255, 70, 85, 0.1);
   color: #ff8a95;
   white-space: nowrap;
   font-weight: 500;
+  font-family: var(--font-display);
+  letter-spacing: 0.5px;
 }
 
 .sidebar-footer {
@@ -803,17 +808,17 @@ async function handleRollback() {
 }
 
 .connection-status.online .status-dot {
-  background: var(--val-accent);
-  box-shadow: 0 0 8px rgba(74, 222, 128, 0.5);
+  background: var(--val-teal);
+  box-shadow: 0 0 8px rgba(24, 229, 182, 0.5);
   animation: statusPulse 2s ease-in-out infinite;
 }
 
 @keyframes statusPulse {
-  0%, 100% { box-shadow: 0 0 8px rgba(74, 222, 128, 0.3); }
-  50% { box-shadow: 0 0 14px rgba(74, 222, 128, 0.6); }
+  0%, 100% { box-shadow: 0 0 8px rgba(24, 229, 182, 0.3); }
+  50% { box-shadow: 0 0 14px rgba(24, 229, 182, 0.6); }
 }
 
-.connection-status.online { color: var(--val-accent); }
+.connection-status.online { color: var(--val-teal); }
 
 /* ============ CHAT CONTAINER ============ */
 .chat-container {
@@ -867,6 +872,11 @@ async function handleRollback() {
   animation: floatUp linear infinite;
 }
 
+/* 每第 4 颗为青绿，红青混色更接近官方战术 HUD */
+.particle.teal {
+  background: rgba(24, 229, 182, 0.1);
+}
+
 @keyframes floatUp {
   0%   { transform: translateY(0) scale(0); opacity: 0; }
   8%   { opacity: 0.5; }
@@ -884,8 +894,21 @@ async function handleRollback() {
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border-bottom: 1px solid rgba(255, 70, 85, 0.12);
+  position: relative;
   z-index: 10;
   flex-shrink: 0;
+}
+
+/* Valorant 标志性底部红渐变细线（战术 HUD 分隔） */
+.chat-header::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 70, 85, 0.55) 18%, rgba(255, 70, 85, 0.15) 55%, transparent 100%);
+  pointer-events: none;
 }
 
 .header-brand {
@@ -929,9 +952,11 @@ async function handleRollback() {
 .brand-text h1 {
   font-size: 17px;
   font-weight: 800;
-  letter-spacing: 1.5px;
+  letter-spacing: 2px;
   color: var(--val-red);
   line-height: 1.3;
+  font-family: var(--font-display);
+  text-shadow: 0 0 18px rgba(255, 70, 85, 0.35);
 }
 
 .brand-text h1 .accent {
@@ -955,53 +980,61 @@ async function handleRollback() {
   gap: 8px;
 }
 
-/* ---- 领域一键切换（v3.6） ---- */
+/* ---- 领域一键切换（v3.6）：斜切角战术舱位 ---- */
 .domain-switch {
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 3px;
-  border-radius: 10px;
+  border-radius: 4px;
   background: var(--val-bg, rgba(255, 255, 255, 0.06));
   border: 1px solid rgba(255, 255, 255, 0.08);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
 }
 
 .domain-btn {
   padding: 5px 14px;
   border: none;
-  border-radius: 8px;
+  border-radius: 0;
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
   background: transparent;
   color: rgba(255, 255, 255, 0.55);
   font-size: 13px;
   font-weight: 600;
+  letter-spacing: 1px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s var(--ease-out-quart);
   white-space: nowrap;
 }
 
 .domain-btn:hover {
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .domain-btn.active {
   background: linear-gradient(135deg, #ff4655, #bd3944);
   color: #fff;
-  box-shadow: 0 2px 8px rgba(255, 70, 85, 0.35);
+  box-shadow: inset 0 0 12px rgba(255, 255, 255, 0.12), 0 2px 10px rgba(255, 70, 85, 0.35);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
-/* 侧边栏领域信息卡 */
+/* 侧边栏领域信息卡：左红条 + 斜切 */
 .domain-info-card {
   margin: 14px 12px;
-  padding: 16px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 14px 16px;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%);
+  background: linear-gradient(135deg, rgba(255, 70, 85, 0.06), rgba(255, 255, 255, 0.03));
+  border: 1px solid rgba(255, 70, 85, 0.15);
 }
 
 .domain-info-card .info-title {
   font-size: 15px;
   font-weight: 800;
   margin-bottom: 8px;
+  padding-left: 10px;
+  border-left: 3px solid var(--val-red);
+  line-height: 1.2;
 }
 
 .domain-info-card .info-desc {
@@ -1017,7 +1050,7 @@ async function handleRollback() {
   align-items: center;
   gap: 6px;
   padding: 5px 12px;
-  border-radius: 20px;
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
   font-size: 11px;
   color: var(--val-text-muted);
   background: rgba(255, 255, 255, 0.03);
@@ -1026,9 +1059,9 @@ async function handleRollback() {
 }
 
 .connection-badge.connected {
-  color: var(--val-accent);
-  border-color: rgba(74, 222, 128, 0.2);
-  background: rgba(74, 222, 128, 0.04);
+  color: var(--val-teal);
+  border-color: rgba(24, 229, 182, 0.25);
+  background: rgba(24, 229, 182, 0.05);
 }
 
 .badge-dot {
@@ -1040,8 +1073,8 @@ async function handleRollback() {
 }
 
 .connection-badge.connected .badge-dot {
-  background: var(--val-accent);
-  box-shadow: 0 0 6px rgba(74, 222, 128, 0.5);
+  background: var(--val-teal);
+  box-shadow: 0 0 6px rgba(24, 229, 182, 0.55);
 }
 
 .badge-label { font-size: 11px; }
@@ -1110,11 +1143,28 @@ async function handleRollback() {
   justify-content: center;
   min-height: 100%;
   padding: 40px 20px 60px;
+  position: relative;
+}
+
+/* Valorant 战术网格底纹：细线网格 + 中央红光晕，纯 CSS 零资源 */
+.welcome-area::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 60% 45% at 50% 32%, rgba(255, 70, 85, 0.07), transparent 70%),
+    linear-gradient(rgba(100, 135, 160, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(100, 135, 160, 0.05) 1px, transparent 1px);
+  background-size: 100% 100%, 44px 44px, 44px 44px;
+  mask-image: radial-gradient(ellipse 75% 65% at 50% 40%, #000 30%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 75% 65% at 50% 40%, #000 30%, transparent 100%);
+  pointer-events: none;
 }
 
 .welcome-hero {
   text-align: center;
   margin-bottom: 40px;
+  position: relative;
 }
 
 .hero-icon {
@@ -1131,14 +1181,26 @@ async function handleRollback() {
 }
 
 .hero-title {
-  font-size: 26px;
+  font-size: 27px;
   font-weight: 800;
   background: linear-gradient(135deg, #ff4655 0%, #ff7b85 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  margin-bottom: 8px;
-  letter-spacing: 1px;
+  margin-bottom: 12px;
+  letter-spacing: 4px;
+  font-family: var(--font-display);
+}
+
+/* 标题下战术装饰线：两端斜切块 + 中线 */
+.hero-title::after {
+  content: '';
+  display: block;
+  width: min(220px, 60%);
+  height: 2px;
+  margin: 10px auto 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 70, 85, 0.6) 20%, rgba(255, 70, 85, 0.6) 80%, transparent);
+  clip-path: polygon(0 0, 100% 0, calc(100% - 4px) 100%, 4px 100%);
 }
 
 .hero-desc {
@@ -1160,19 +1222,39 @@ async function handleRollback() {
   align-items: center;
   gap: 10px;
   padding: 14px 18px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(90, 110, 127, 0.1);
-  border-radius: var(--val-radius-md);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015));
+  border: 1px solid rgba(90, 110, 127, 0.14);
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
   cursor: pointer;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  animation: cardIn 0.5s ease-out both;
+  transition: all 0.25s var(--ease-out-quart);
+  animation: cardIn 0.5s var(--ease-out-expo) both;
+  position: relative;
+  overflow: hidden;
+}
+
+/* hover 扫光：一道斜向高光掠过（只动 transform） */
+.quick-card::after {
+  content: '';
+  position: absolute;
+  top: -40%;
+  left: -80%;
+  width: 50%;
+  height: 180%;
+  background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+  transform: skewX(-20deg);
+  transition: left 0.55s var(--ease-out-expo);
+  pointer-events: none;
+}
+
+.quick-card:hover::after {
+  left: 130%;
 }
 
 .quick-card:hover {
-  border-color: rgba(255, 70, 85, 0.25);
-  background: rgba(255, 70, 85, 0.06);
+  border-color: rgba(255, 70, 85, 0.35);
+  background: linear-gradient(135deg, rgba(255, 70, 85, 0.08), rgba(255, 70, 85, 0.03));
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(255, 70, 85, 0.06);
+  box-shadow: 0 8px 24px rgba(255, 70, 85, 0.1);
 }
 
 .quick-card:active {
@@ -1257,16 +1339,19 @@ async function handleRollback() {
 
 .fn-tag {
   font-size: 10px;
-  color: rgba(90, 130, 165, 0.95);
+  color: rgba(139, 155, 171, 1);
   background: rgba(74, 109, 140, 0.15);
-  border: 1px solid rgba(74, 109, 140, 0.15);
-  padding: 2px 8px;
-  border-radius: 8px;
+  border: 1px solid rgba(74, 109, 140, 0.2);
+  padding: 2px 9px;
+  clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
+  font-family: var(--font-display);
+  letter-spacing: 0.4px;
 }
 
 .fn-score {
-  opacity: 0.75;
-  margin-left: 2px;
+  color: var(--val-gold);
+  margin-left: 3px;
+  font-weight: 600;
 }
 
 
@@ -1290,6 +1375,18 @@ async function handleRollback() {
   border: 1px solid rgba(189, 57, 68, 0.2);
   border-top-left-radius: 4px;
   color: #ffffff;
+  overflow: hidden;
+}
+
+/* AI 气泡左侧战术红条（来源指示） */
+.msg-bubble.assistant::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--val-red), rgba(255, 70, 85, 0.15));
 }
 
 .msg-bubble.user {
@@ -1421,22 +1518,22 @@ async function handleRollback() {
 .send-btn {
   width: 40px;
   height: 40px;
-  border-radius: var(--val-radius-sm);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
   border: none;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.04);
   color: var(--val-text-dim);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.25s var(--ease-out-quart);
   flex-shrink: 0;
 }
 
 .send-btn.active {
   background: linear-gradient(135deg, #e63e4d 0%, #ff4655 100%);
   color: #fff;
-  box-shadow: 0 3px 12px rgba(255, 70, 85, 0.3);
+  box-shadow: inset 0 0 10px rgba(255, 255, 255, 0.1), 0 3px 14px rgba(255, 70, 85, 0.35);
 }
 
 .send-btn.active:hover {
@@ -1481,6 +1578,18 @@ async function handleRollback() {
 .md-body :deep(li) { margin: 2px 0; }
 .md-body :deep(li::marker) { color: var(--val-red); }
 .md-body :deep(p) { margin: 5px 0; }
+
+.md-body :deep(a) {
+  color: var(--val-accent);
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(0, 212, 255, 0.4);
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.md-body :deep(a:hover) {
+  color: #5ce0ff;
+  border-bottom-color: #5ce0ff;
+}
 
 .md-body :deep(code) {
   background: rgba(255, 70, 85, 0.08);

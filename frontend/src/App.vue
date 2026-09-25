@@ -64,25 +64,46 @@ async function enterAdminGate() {
 </script>
 
 <style scoped>
+/* 管理入口：斜切舱门风格，hover 扫光 */
 .admin-entry {
   position: fixed;
   right: 18px;
   bottom: 18px;
   z-index: 40;
-  padding: 8px 18px;
-  border-radius: 999px;
+  padding: 8px 22px;
+  clip-path: polygon(9px 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%, 0 9px);
   border: 1px solid rgba(90, 110, 127, 0.25);
-  background: rgba(15, 25, 35, 0.85);
+  background: rgba(15, 25, 35, 0.88);
   color: var(--val-text-dim);
   font-size: 13px;
+  letter-spacing: 2px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.25s var(--ease-out-quart);
   backdrop-filter: blur(4px);
+  overflow: hidden;
+}
+
+.admin-entry::after {
+  content: '';
+  position: absolute;
+  top: -40%;
+  left: -80%;
+  width: 50%;
+  height: 180%;
+  background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+  transform: skewX(-20deg);
+  transition: left 0.55s var(--ease-out-expo);
+  pointer-events: none;
+}
+
+.admin-entry:hover::after {
+  left: 130%;
 }
 
 .admin-entry:hover {
   color: var(--val-red);
   border-color: rgba(255, 70, 85, 0.4);
+  box-shadow: 0 4px 18px rgba(255, 70, 85, 0.15);
 }
 
 /* 【v3.28】移动端：抬高避开底部输入框 + 安全区（按钮在本组件 scoped 作用域，须在此覆盖） */

@@ -13,17 +13,90 @@ html, body {
   height: 100%;
 }
 
-/* 无畏契约深色主题 */
+/* ============================================================
+   Valorant 战术风设计 token（全局唯一事实源）
+   官方视觉语言：标志红 #ff4655 / 深海军蓝 #0f1923 / 锐利斜切角
+   ============================================================ */
 :root {
+  /* 主色板 */
   --val-red: #ff4655;
   --val-red-dark: #bd3944;
+  --val-red-soft: rgba(255, 70, 85, 0.15);
+  --val-teal: #18e5b6;            /* 官方辅助青绿：成功/在线/积极 */
+  --val-gold: #f0b90b;            /* 官方金：数字强调/积分 */
+  --val-accent: #00d4ff;
+
+  /* 背景层次（全部带蓝偏，不用纯黑纯灰） */
   --val-bg: #0f1923;
   --val-bg-light: #1a2733;
   --val-bg-card: #1e2d3a;
+  --val-bg-deep: #0a0f16;
+
+  /* 文字层次 */
   --val-text: #e8edf2;
   --val-text-dim: #8b9bab;
   --val-border: #2a3a4a;
-  --val-accent: #00d4ff;
+
+  /* 缓动（指数曲线，禁 bounce/elastic） */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* 展示字体：战术感数字/英文（本地化 Rajdhani，OFL 许可） */
+  --font-display: 'Rajdhani', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+}
+
+/* Rajdhani：拉丁字符战术展示字体（统计数字 / LOGO / 徽标），仅 15KB×2 */
+@font-face {
+  font-family: 'Rajdhani';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/rajdhani-600.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Rajdhani';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/rajdhani-700.woff2') format('woff2');
+}
+
+/* 全局选区：品牌红 */
+::selection {
+  background: rgba(255, 70, 85, 0.35);
+  color: #fff;
+}
+
+/* 全局键盘焦点环：可见且带品牌色（无障碍，禁止移除不留替代） */
+:focus-visible {
+  outline: 2px solid var(--val-red);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* 全局滚动条：细窄深蓝，拖块带蓝偏灰 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 135, 160, 0.25);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 135, 160, 0.45);
+}
+
+/* 减动效偏好：关闭所有装饰动画，保留可用性 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* 【v3.28】移动端基础优化 */

@@ -430,6 +430,19 @@ onMounted(loadAll)
   background: rgba(15, 25, 35, 0.9);
   flex-shrink: 0;
   z-index: 2;
+  position: relative;
+}
+
+/* 与对话页一致的战术红细线 */
+.admin-header::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 70, 85, 0.5) 18%, rgba(255, 70, 85, 0.12) 55%, transparent 100%);
+  pointer-events: none;
 }
 
 .back-btn {
@@ -509,38 +522,62 @@ onMounted(loadAll)
 .stat-card {
   background: linear-gradient(135deg, rgba(30, 45, 58, 0.9), rgba(15, 25, 35, 0.9));
   border: 1px solid var(--val-border);
-  border-radius: 12px;
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
   padding: 18px 20px;
+  position: relative;
+  transition: border-color 0.25s var(--ease-out-quart);
+}
+
+.stat-card:hover {
+  border-color: rgba(255, 70, 85, 0.35);
+}
+
+/* 卡顶红色战术细线 */
+.stat-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 36px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--val-red), transparent);
 }
 
 .stat-value {
-  font-size: 26px;
-  font-weight: 800;
+  font-size: 30px;
+  font-weight: 700;
   color: var(--val-text);
+  font-family: var(--font-display);
+  letter-spacing: 1px;
+  line-height: 1.1;
 }
 
 .stat-value.warn {
   color: var(--val-red);
+  text-shadow: 0 0 16px rgba(255, 70, 85, 0.3);
 }
 
 .stat-value.ok {
-  color: #3dd68c;
+  color: var(--val-teal);
+  text-shadow: 0 0 16px rgba(24, 229, 182, 0.25);
 }
 
 .stat-value.accent {
-  color: var(--val-accent);
+  color: var(--val-gold);
+  text-shadow: 0 0 16px rgba(240, 185, 11, 0.25);
 }
 
 .stat-label {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--val-text-dim);
-  margin-top: 4px;
+  margin-top: 6px;
+  letter-spacing: 2px;
 }
 
 .panel-card {
   background: rgba(30, 45, 58, 0.65);
   border: 1px solid var(--val-border);
-  border-radius: 12px;
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
   padding: 20px;
 }
 
@@ -551,6 +588,9 @@ onMounted(loadAll)
 .card-title {
   font-size: 15px;
   font-weight: 700;
+  padding-left: 10px;
+  border-left: 3px solid var(--val-red);
+  line-height: 1.2;
 }
 
 .card-title-row {
@@ -574,13 +614,14 @@ onMounted(loadAll)
 
 .filter-btn {
   padding: 5px 14px;
-  border-radius: 999px;
+  clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
   border: 1px solid rgba(90, 110, 127, 0.25);
   background: rgba(255, 255, 255, 0.03);
   color: var(--val-text-dim);
   font-size: 12px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.2s var(--ease-out-quart);
+  letter-spacing: 1px;
 }
 
 .filter-btn:hover {
@@ -606,9 +647,16 @@ onMounted(loadAll)
   gap: 12px;
   align-items: center;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: 4px;
   font-size: 13px;
   background: rgba(15, 25, 35, 0.35);
+  border-left: 2px solid transparent;
+  transition: all 0.2s var(--ease-out-quart);
+}
+
+.table-row:hover:not(.table-head) {
+  background: rgba(255, 70, 85, 0.05);
+  border-left-color: var(--val-red);
 }
 
 .table-row.audit-grid {
@@ -622,16 +670,20 @@ onMounted(loadAll)
 .table-row.table-head {
   background: rgba(255, 255, 255, 0.03);
   color: var(--val-text-dim);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 2px;
 }
 
 .status-tag {
   display: inline-block;
   padding: 2px 10px;
-  border-radius: 999px;
-  font-size: 12px;
+  clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
+  font-size: 11px;
   line-height: 18px;
+  font-family: var(--font-display);
+  letter-spacing: 1px;
+  font-weight: 600;
 }
 
 .status-tag.open {
@@ -641,9 +693,9 @@ onMounted(loadAll)
 }
 
 .status-tag.resolved {
-  color: #8ce8bb;
-  background: rgba(61, 214, 140, 0.1);
-  border: 1px solid rgba(61, 214, 140, 0.3);
+  color: #8cf5d9;
+  background: rgba(24, 229, 182, 0.1);
+  border: 1px solid rgba(24, 229, 182, 0.3);
 }
 
 .status-tag.closed {
@@ -667,22 +719,23 @@ onMounted(loadAll)
 }
 
 .action-btn {
-  padding: 5px 12px;
-  border-radius: 6px;
+  padding: 5px 14px;
+  clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
   font-size: 12px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.2s var(--ease-out-quart);
   margin-right: 6px;
+  letter-spacing: 1px;
 }
 
 .action-btn.resolve {
-  border: 1px solid rgba(61, 214, 140, 0.35);
-  background: rgba(61, 214, 140, 0.08);
-  color: #8ce8bb;
+  border: 1px solid rgba(24, 229, 182, 0.35);
+  background: rgba(24, 229, 182, 0.08);
+  color: #8cf5d9;
 }
 
 .action-btn.resolve:hover:not(:disabled) {
-  background: rgba(61, 214, 140, 0.18);
+  background: rgba(24, 229, 182, 0.18);
 }
 
 .action-btn.close {
