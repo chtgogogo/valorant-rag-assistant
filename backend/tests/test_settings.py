@@ -16,7 +16,8 @@ class TestRequireApiKey:
 
 class TestGetProfile:
     def test_known_domain_resolved(self):
-        profile = st.get_profile("ecommerce")
+        # 【v3.29】电商领域已删除，法律领域 law 替代
+        profile = st.get_profile("law")
         assert profile.get("app_name")
 
     def test_unknown_domain_raises_404(self):
