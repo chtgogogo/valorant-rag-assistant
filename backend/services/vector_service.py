@@ -37,7 +37,15 @@ def _get_embedding_model():
                 device = get_device()
                 print(f"[向量引擎] 正在加载 Embedding 模型: {model_name} (device={device}) ...")
                 try:
-                    _embedding_model = SentenceTransformer(model_name, device=device)
+                    try:
+                        # 【v3.31】优先本地缓存加载：模型下载过一次后零网络依赖。
+                        # 原实现每次加载都 HEAD 检查线上更新，hf-mirror 抖动时每个文件
+                        # 重试 5 次（10s 超时/次），加载拖到分钟级甚至失败——
+                        # 工单回流"向量入库失败"的根因
+                        _embedding_model = SentenceTransformer(model_name, device=device, local_files_only=True)
+                    except Exception:
+                        print("[向量引擎] 本地缓存不可用，转在线下载模型（首次部署需联网）...")
+                        _embedding_model = SentenceTransformer(model_name, device=device)
                 except Exception as e:
                     if is_oom_error(e) and device == "cuda":
                         degrade_to_cpu(None)

@@ -186,6 +186,22 @@ def resolve_ticket(ticket_id: str, answer: str, feedback: bool = True) -> dict:
     return {"ticket": get_ticket(ticket_id), "doc_id": doc_id}
 
 
+def delete_ticket(ticket_id: str) -> dict:
+    """删除工单记录（已关闭工单的清理动作）。
+    只删这条记录，不碰已回流的知识库文档（回流文档走知识库管理页删除）"""
+    ticket = get_ticket(ticket_id)
+    if ticket is None:
+        raise ValueError(f"工单不存在: {ticket_id}")
+    with _lock:
+        conn = _conn()
+        try:
+            conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+            conn.commit()
+        finally:
+            conn.close()
+    return ticket
+
+
 def close_ticket(ticket_id: str) -> dict:
     """关闭工单（不填答案、不回流：重复问题/无效反馈场景）"""
     ticket = get_ticket(ticket_id)

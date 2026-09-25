@@ -81,6 +81,11 @@
                   {{ acting === t.id ? '保存中' : '编辑' }}
                 </button>
               </template>
+              <template v-else-if="t.status === 'closed'">
+                <button class="action-btn delete" @click="handleDeleteTicket(t)" :disabled="acting === t.id">
+                  {{ acting === t.id ? '删除中' : '删除' }}
+                </button>
+              </template>
               <span v-else class="cell-dim">—</span>
             </span>
           </div>
@@ -144,6 +149,7 @@ import {
   getTicketStats,
   resolveTicket,
   closeTicket,
+  deleteTicket,
   getRecentAudit,
   getRecentFeedback,
   clearAdminKey,
@@ -363,6 +369,40 @@ async function handleClose(t) {
     }
   } catch (e) {
     ElMessage.error('关闭失败，请检查网络或后端服务')
+  } finally {
+    acting.value = ''
+  }
+}
+
+// 删除已关闭的工单记录（只删这条记录，不动已回流的知识库文档）
+async function handleDeleteTicket(t) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除工单「${t.question}」吗？仅删除这条工单记录，不影响已回流的知识库内容。`,
+      '删除确认',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  acting.value = t.id
+  try {
+    const res = await deleteTicket(t.id)
+    if (res.data && res.data.code === 200) {
+      ElMessage.success('工单已删除')
+      await Promise.all([loadTickets(), loadStats()])
+    } else {
+      ElMessage.error(res.data?.msg || '删除失败')
+    }
+  } catch (e) {
+    const detail = e?.response?.data?.detail
+    if (e?.response?.status === 403) {
+      clearAdminKey()
+      ElMessage.error(detail || '管理密码错误，请重新验证')
+      await repromptAdminKey()
+    } else {
+      ElMessage.error(detail || '删除失败，请检查网络或后端服务')
+    }
   } finally {
     acting.value = ''
   }
@@ -664,6 +704,16 @@ onMounted(loadAll)
 
 .action-btn.edit:hover:not(:disabled) {
   background: rgba(0, 212, 255, 0.18);
+}
+
+.action-btn.delete {
+  border: 1px solid rgba(255, 70, 85, 0.35);
+  background: rgba(255, 70, 85, 0.08);
+  color: #ff8a95;
+}
+
+.action-btn.delete:hover:not(:disabled) {
+  background: rgba(255, 70, 85, 0.18);
 }
 
 .action-btn:disabled {

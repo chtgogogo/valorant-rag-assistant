@@ -61,3 +61,29 @@ class TestTicketFeedbackIdempotent:
         records = [d for d in doc_list if d["doc_id"] == doc_id_1]
         assert len(records) == 1, f"重复回流产生 {len(records)} 条重复注册记录（应恰好 1 条）"
         vs._chroma_client = None
+
+
+class TestTicketDelete:
+    """【v3.31】删除工单记录（已关闭工单的清理动作）"""
+
+    def test_delete_closed_ticket(self, monkeypatch, tmp_path):
+        import services.ticket_service as ts
+
+        monkeypatch.setattr(ts, "_DB_PATH", str(tmp_path / "tickets.db"))
+        ts._init_db()
+
+        tid = ts.create_ticket("测试删除问题", "测试改写", 0.42, "valorant", "sess-del")
+        closed = ts.close_ticket(tid)
+        assert closed["status"] == "closed"
+
+        deleted = ts.delete_ticket(tid)
+        assert deleted["id"] == tid
+        assert ts.get_ticket(tid) is None  # 记录已消失
+
+    def test_delete_missing_ticket_raises(self, monkeypatch, tmp_path):
+        import services.ticket_service as ts
+
+        monkeypatch.setattr(ts, "_DB_PATH", str(tmp_path / "tickets.db"))
+        ts._init_db()
+        with pytest.raises(ValueError):
+            ts.delete_ticket("tk_not_exist")

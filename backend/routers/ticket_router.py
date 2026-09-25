@@ -48,3 +48,12 @@ def ticket_close(ticket_id: str):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return ApiResponse(data={"ticket": ticket})
+
+
+@ticket_router.delete("/{ticket_id}", summary="删除工单记录（建议仅对已关闭工单使用）")
+def ticket_delete(ticket_id: str):
+    try:
+        ticket = ticket_service.delete_ticket(ticket_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return ApiResponse(data={"ticket": ticket}, msg="工单已删除")

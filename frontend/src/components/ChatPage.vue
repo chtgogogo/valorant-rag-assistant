@@ -30,7 +30,17 @@
        <div class="sidebar-categories" v-else>
          <div class="domain-info-card">
            <div class="info-title">{{ currentAppName }}</div>
-           <p class="info-desc">当前知识库：<b>{{ currentKb }}</b>。快捷问题见欢迎屏，也可直接输入售后问题。</p>
+           <p class="info-desc">点击下方问题快速提问，也可以直接输入。</p>
+         </div>
+         <div class="cat-section">
+           <div
+             class="cat-item"
+             v-for="q in quickQuestions"
+             :key="q.label"
+             @click="quickAsk(q.text)"
+           >
+             <span class="item-label">{{ q.label }}</span>
+           </div>
          </div>
        </div>
        <div class="sidebar-footer">
@@ -83,7 +93,7 @@
              <span class="badge-dot"></span>
              <span class="badge-label">{{ backendOnline ? '已连接' : '未连接' }}</span>
            </div>
-            <button class="tool-btn tool-btn-text" @click="emit('manage')" title="知识库管理">知识库</button>
+            <button class="tool-btn tool-btn-text" @click="emit('manage', currentKb)" title="知识库管理">知识库</button>
 
            <button class="tool-btn" @click="handleClear" :disabled="loading" title="清空对话">
              <svg viewBox="0 0 24 24" class="tool-icon"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>

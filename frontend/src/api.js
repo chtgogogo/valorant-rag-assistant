@@ -191,6 +191,11 @@ export function closeTicket(ticketId) {
   return api.post(`/ticket/${ticketId}/close`)
 }
 
+// 删除工单记录（已关闭工单的清理；不影响已回流的知识库文档）
+export function deleteTicket(ticketId) {
+  return api.delete(`/ticket/${ticketId}`)
+}
+
 // 最近 N 天问答审计记录
 export function getRecentAudit(days = 7) {
   return api.get('/audit/recent', {

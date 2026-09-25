@@ -8,7 +8,7 @@
       </button>
       <div>
         <h1>知识库管理</h1>
-        <p>管理无畏契约攻略文档，上传后自动解析、切分、向量化并用于回答</p>
+        <p>管理「{{ kbId }}」知识库文档，上传后自动解析、切分、向量化并用于回答</p>
       </div>
       <div class="header-actions">
         <button class="refresh-btn" @click="loadAll" :disabled="loading">
@@ -92,8 +92,11 @@ import {
   getVectorStats,
 } from '../api.js'
 
+// 当前管理的知识库由对话页选中的领域带入（App.vue 传入），不再写死 valorant
+const props = defineProps({
+  kbId: { type: String, default: 'valorant' },
+})
 const emit = defineEmits(['back'])
-const kbId = 'valorant'
 const docs = ref([])
 const stats = ref({})
 const selectedFile = ref(null)
@@ -105,8 +108,8 @@ async function loadAll() {
   loading.value = true
   try {
     const [docRes, statRes] = await Promise.all([
-      listDocuments(kbId),
-      getVectorStats(kbId),
+      listDocuments(props.kbId),
+      getVectorStats(props.kbId),
     ])
     if (docRes.data && docRes.data.code === 200) {
       docs.value = docRes.data.data || []
@@ -131,7 +134,7 @@ async function handleUpload() {
   if (!selectedFile.value) return
   uploading.value = true
   try {
-    const res = await uploadDocument(selectedFile.value, kbId)
+    const res = await uploadDocument(selectedFile.value, props.kbId)
     if (res.data && res.data.code === 200) {
       ElMessage.success(`上传成功，已生成 ${res.data.data?.chunk_count || 0} 个文本块`)
       selectedFile.value = null
@@ -158,7 +161,7 @@ async function handleDelete(doc) {
   }
   deleting.value = doc.doc_id
   try {
-    const res = await deleteDocument(doc.doc_id, kbId)
+    const res = await deleteDocument(doc.doc_id, props.kbId)
     if (res.data && res.data.code === 200) {
       ElMessage.success('文档已删除')
       await loadAll()

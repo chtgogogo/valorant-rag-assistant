@@ -42,7 +42,13 @@ def _get_cross_encoder() -> "CrossEncoder":
                 device = get_device()
                 print(f"[重排序] 正在加载 Rerank 模型: {model_name} (device={device}) ...")
                 try:
-                    _cross_encoder = CrossEncoder(model_name, device=device, max_length=512)
+                    try:
+                        # 【v3.31】优先本地缓存加载（与 vector_service 同策略）：
+                        # 模型下载过一次后零网络依赖，hf-mirror 抖动不再拖垮检索链路
+                        _cross_encoder = CrossEncoder(model_name, device=device, max_length=512, local_files_only=True)
+                    except Exception:
+                        print("[重排序] 本地缓存不可用，转在线下载模型（首次部署需联网）...")
+                        _cross_encoder = CrossEncoder(model_name, device=device, max_length=512)
                 except Exception as e:
                     if is_oom_error(e) and device == "cuda":
                         degrade_to_cpu(None)

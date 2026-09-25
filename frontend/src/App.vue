@@ -1,6 +1,6 @@
 <template>
   <ChatPage v-show="view === 'chat'" @manage="enterDocs" />
-  <KnowledgeManage v-if="view === 'docs'" @back="view = 'chat'" />
+  <KnowledgeManage v-if="view === 'docs'" :kb-id="docsKb" @back="view = 'chat'" />
   <AdminPage v-if="view === 'admin'" @back="view = 'chat'" />
   <!-- 运营管理入口：只挂在对话页上，点击先过管理密码门（v3.30） -->
   <button v-if="view === 'chat'" class="admin-entry" @click="enterAdmin" title="工单 / 审计 运营管理">
@@ -17,6 +17,8 @@ import AdminPage from './components/AdminPage.vue'
 import { getAdminKey, setAdminKey } from './api.js'
 
 const view = ref('chat')
+// 知识库管理页展示的知识库：由对话页当前选中的领域带入（不再写死 valorant）
+const docsKb = ref('valorant')
 
 // 【v3.30】管理密码门：工单/知识库/审计是管理数据，不能任何人都进。
 // 输入的管理密码存 localStorage（服务端每次请求都校验 X-Admin-Key，输错照样 403）。
@@ -30,7 +32,8 @@ async function enterAdmin() {
 }
 
 // 知识库管理同样挂管理门（上传/删除文档会改知识库，属管理操作）
-async function enterDocs() {
+async function enterDocs(kbId) {
+  if (kbId) docsKb.value = kbId
   try {
     await enterAdminGate()
   } catch {
