@@ -38,6 +38,7 @@ class ChatResponse(BaseModel):
     sources: List[Dict]  # 引用来源：[{"name": "文档名", "id": "文档id"}]
     history: List[ChatMessage]  # 最新对话历史
     route: Optional[Dict] = None  # 【W8-卡3】路由决策 meta {"route": "agent"/"workflow", "reason": "…"}；门槛拦截/缓存命中等无决策轮为 null（可解释性，前端可忽略）
+    pending_proposals: List[Dict] = []  # 【W8-卡5.2】Agent 分岔轮待人工确认的知识库写入方案（仅 Agent 轮非空；确认走 /api/agent/kb-write/confirm）
 # 【W8-卡1】Agent 请求结构（复用 ChatRequest 的三层防线：pattern/长度/kb白名单）
 class AgentChatRequest(BaseModel):
     session_id: str = Field(pattern=r"^[\w\-]{1,64}$")  # 会话ID，隔离不同用户

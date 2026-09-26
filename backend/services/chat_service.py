@@ -553,11 +553,13 @@ def classify_turn_route(session_id: str, question: str, kb_id: str = None) -> tu
     return decision.route == ROUTE_AGENT, meta
 
 
-def agent_turn(session_id: str, question: str, kb_id: str = None) -> tuple[str, list[dict], list[ChatMessage]]:
+def agent_turn(session_id: str, question: str, kb_id: str = None) -> tuple[str, list[dict], list[ChatMessage], list[dict]]:
     """【W8-卡3】Agent 分支执行 + 落账：与 Workflow 轮同款待遇（写历史 + 审计 pipeline=agent）。
     递归安全：卡 2 降级路径 _degrade_to_workflow 直调 chat_single_turn、不经过本函数，
     Agent 分支在结构上不可能重入。token 账本暂缺（run_agent 未接 usage_ledger），
-    审计不记 token_usage——宁可空缺不编数字。"""
+    审计不记 token_usage——宁可空缺不编数字。
+    【W8-卡5.2】第四个返回值 = 待人工确认的写入方案（propose_kb_write 产物），
+    普通聊天分岔轮也要透传给前端弹确认卡片——曾在此丢失导致卡片无素材。"""
     from services.agent.loop import run_agent  # 延迟 import：loop 携带 llm_factory 重依赖
     kb_id = resolve_kb_id(kb_id)
     start_time = time.time()
@@ -566,7 +568,7 @@ def agent_turn(session_id: str, question: str, kb_id: str = None) -> tuple[str, 
     history = append_history(session_id, question, answer)
     log_qa(session_id, question, question, sources, answer,
            (time.time() - start_time) * 1000, kb_id, "agent")
-    return answer, sources, history
+    return answer, sources, history, result.get("pending_proposals", [])
 
 
 def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple[str, list[dict], list[ChatMessage]]:

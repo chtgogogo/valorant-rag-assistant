@@ -160,6 +160,24 @@
               <div v-if="msg.role === 'assistant'" class="md-body" v-html="msg.html"></div>
               <div v-else class="user-text">{{ msg.content }}</div>
             </div>
+            <!-- 【W8-卡5.2】知识库写入确认卡片：Agent 只产方案，人工放行才落库 -->
+            <div v-if="msg.pendingProposals && msg.pendingProposals.length" class="kb-proposals">
+              <div v-for="p in msg.pendingProposals" :key="p.proposal_id" class="kb-proposal">
+                <template v-if="p._state !== 'ignored'">
+                  <div class="kp-title">📝 知识库写入方案 · 需人工确认（未确认绝不落库）</div>
+                  <div class="kp-row"><span class="kp-label">目标库</span>{{ p.kb_id }}</div>
+                  <div class="kp-row"><span class="kp-label">内容</span>{{ p.content_preview }}<span v-if="p.content_chars > p.content_preview.length"> …（共 {{ p.content_chars }} 字）</span></div>
+                  <div class="kp-row"><span class="kp-label">理由</span>{{ p.reason }}</div>
+                  <div v-if="!p._state" class="kp-actions">
+                    <button class="kp-btn ok" :disabled="p._busy" @click="confirmProposal(msg, p)">✓ 确认写入</button>
+                    <button class="kp-btn no" :disabled="p._busy" @click="p._state = 'ignored'">忽略</button>
+                  </div>
+                  <div v-else-if="p._state === 'done'" class="kp-result ok-text">✅ {{ p._result }}</div>
+                  <div v-else-if="p._state === 'failed'" class="kp-result err-text">❌ {{ p._result }}</div>
+                </template>
+                <div v-else class="kp-result">已忽略（方案 10 分钟后自动作废）</div>
+              </div>
+            </div>
             <!-- 用户反馈（v3.8）：assistant 回复下点赞/点踩；已评价置灰防重评（组件内存状态，不持久化）；错误气泡不参与评价 -->
             <div v-if="msg.role === 'assistant' && msg.content && !loading && !msg.isError" class="msg-feedback">
               <button class="fb-btn" :disabled="!!msg.fb" :class="{ active: msg.fb === 'up' }" @click="handleFeedback(msg, 'up')" title="有帮助">👍</button>
@@ -237,7 +255,7 @@ import { ref, reactive, nextTick, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { sendMessage, sendMessageStream, sendAgentChatStream, clearHistory, rollbackHistory, getHistory, testChat, getDomains, sendFeedback } from '../api.js'
+import { sendMessage, sendMessageStream, sendAgentChatStream, clearHistory, rollbackHistory, getHistory, testChat, getDomains, sendFeedback, confirmKbWrite, getAdminKey, setAdminKey } from '../api.js'
 
 const emit = defineEmits(['manage'])
 
@@ -456,10 +474,11 @@ async function handleSend() {
       html: '',
       sources: [],
       time: getTime(),
+      pendingProposals: [], // 【W8-卡5.2】Agent 分岔轮的待确认写入方案
     })
     let started = false // 收到首个token后才把占位消息上屏，避免空泡闪烁
 
-    const { answer } = await sendMessageStream(sessionId, question, currentKb.value, {
+    const { answer, pending_proposals } = await sendMessageStream(sessionId, question, currentKb.value, {
       onSources: (sources) => { placeholder.sources = sources || [] },
       onToken: (delta) => {
         if (!started) {
@@ -471,6 +490,7 @@ async function handleSend() {
         scrollToBottom()
       },
     })
+    placeholder.pendingProposals = pending_proposals || []
     // 兜底：全程没收到任何token（如直接done），也要保证答案上屏
     if (!started) {
       placeholder.content = answer
@@ -579,7 +599,8 @@ async function runAgentTurn(question) {
     html: '',
     sources: [],
     time: getTime(),
-    agentTrace: [], // SSE 事件流（逐行上屏）
+    agentTrace: [],     // SSE 事件流（逐行上屏）
+    pendingProposals: [], // 【W8-卡5.2】待确认写入方案
   })
   messages.value.push(traceMsg)
   let answered = false
@@ -600,6 +621,7 @@ async function runAgentTurn(question) {
       traceMsg.html = renderMarkdown(final.answer)
     }
     traceMsg.sources = final.sources || []
+    traceMsg.pendingProposals = final.pending_proposals || []
   } catch (err) {
     // 轨迹区给出失败说明而非卡死（卡 5 验收：断网/工具故障时轨迹区出现说明）——
     // SSE 结构化 error、流中断、后端未启动等一律在此消化，不再向上抛
@@ -610,6 +632,32 @@ async function runAgentTurn(question) {
       traceMsg.html = renderMarkdown(traceMsg.content)
       traceMsg.isError = true
     }
+  }
+}
+
+// ---- 知识库写入确认卡片（W8-卡5.2）：Agent 提议写入 → 人工放行才落库（D4 确认门的前端） ----
+async function confirmProposal(msg, p) {
+  p._busy = true
+  try {
+    if (!getAdminKey()) {
+      // 复用管理密码门模式：首次在此输入（存 localStorage，安全由服务端每次校验兜底）
+      const { value } = await ElMessageBox.prompt(
+        '该操作需管理密码（X-Admin-Key）人工放行，写入后可被检索',
+        '确认知识库写入', { inputType: 'password', confirmButtonText: '放行', cancelButtonText: '取消' })
+      if (value) setAdminKey(value.trim())
+    }
+    const res = await confirmKbWrite(p.proposal_id)
+    p._state = 'done'
+    p._result = res.data?.data?.message || '已写入知识库，可检索生效'
+    ElMessage.success('知识库已更新')
+  } catch (err) {
+    if (err === 'cancel' || err?.action === 'cancel') { p._state = ''; return } // 密码弹窗取消≠方案失败
+    const detail = err?.response?.data?.detail
+    p._state = 'failed'
+    p._result = typeof detail === 'string' ? detail : (err?.message || '确认失败')
+    ElMessage.error(p._result)
+  } finally {
+    p._busy = false
   }
 }
 
@@ -1905,5 +1953,31 @@ async function handleRollback() {
   border-color: var(--val-teal);
 }
 .agent-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
+/* 【W8-卡5.2】知识库写入确认卡片 */
+.kb-proposals { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 4px; }
+.kb-proposal {
+  border: 1px solid var(--val-border);
+  border-left: 3px solid var(--val-gold);
+  border-radius: var(--val-radius-sm);
+  padding: 8px 10px;
+  background: rgba(15, 25, 35, 0.45);
+  font-size: 12px;
+  color: var(--val-text);
+}
+.kp-title { font-weight: 700; margin-bottom: 6px; letter-spacing: 0.3px; }
+.kp-row { display: flex; gap: 8px; line-height: 1.6; margin: 2px 0; }
+.kp-label { flex: 0 0 auto; color: var(--val-teal); font-weight: 700; }
+.kp-actions { display: flex; gap: 8px; margin-top: 8px; }
+.kp-btn {
+  padding: 5px 12px; font-size: 12px; font-weight: 700; cursor: pointer;
+  border-radius: var(--val-radius-sm); border: 1px solid var(--val-border);
+  background: transparent; color: var(--val-text); transition: all 0.15s ease;
+}
+.kp-btn.ok:hover:not(:disabled) { background: var(--val-teal); border-color: var(--val-teal); color: #0f1923; }
+.kp-btn.no:hover:not(:disabled) { border-color: var(--val-red); color: var(--val-red); }
+.kp-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.kp-result { margin-top: 8px; line-height: 1.5; }
+.ok-text { color: var(--val-teal); }
+.err-text { color: var(--val-red); }
 </style>
 

@@ -34,12 +34,12 @@ def _patch_prep(monkeypatch, kind="retrieve", cached=None, question_for_prompt="
         "history": [], "cache": None, "cached": cached})
 
 
-def _patch_agent_turn(monkeypatch, answer="Agent 答案 [S1]"):
+def _patch_agent_turn(monkeypatch, answer="Agent 答案 [S1]", proposals=None):
     calls = []
 
     def fake_agent_turn(sid, q, kb=None):
         calls.append((sid, q, kb))
-        return answer, [{"name": "a.md", "id": "d1"}], []
+        return answer, [{"name": "a.md", "id": "d1"}], [], (proposals or [])
 
     monkeypatch.setattr(cs, "agent_turn", fake_agent_turn)
     return calls
@@ -96,15 +96,30 @@ class TestAgentTurn:
         monkeypatch.setattr(loop_mod, "run_agent",
                             lambda q, kb_id=None, session_id="":
                             {"answer": "A [S1]", "sources": [{"name": "m.md", "id": "d"}],
-                             "steps": [], "degraded": False})
+                             "steps": [], "degraded": False, "pending_proposals": []})
         audit_calls = []
         monkeypatch.setattr(cs, "log_qa", lambda *a, **k: audit_calls.append(a))
-        answer, sources, history = cs.agent_turn("s5", AGENT_Q, "valorant")
+        answer, sources, history, proposals = cs.agent_turn("s5", AGENT_Q, "valorant")
         assert answer == "A [S1]"
         assert history[-2].role == "user" and history[-2].content == AGENT_Q
         assert history[-1].role == "assistant" and history[-1].content == "A [S1]"
         assert audit_calls, "Agent 轮必须写审计"
         assert audit_calls[0][7] == "agent", "审计 pipeline 应标 agent（第8个位置参数）"
+        assert proposals == []
+
+    def test_returns_pending_proposals_from_run_agent(self, monkeypatch, tmp_path):
+        """【W8-卡5.2】run_agent 的待确认写入方案必须透传（曾在 agent_turn 丢失→前端无卡片素材）"""
+        monkeypatch.setitem(cs.CHAT_CONFIG, "history_path", str(tmp_path))
+        import services.agent.loop as loop_mod
+        proposal = [{"proposal_id": "prop_x", "kb_id": "valorant",
+                     "reason": "用户要求", "content_preview": "测试内容", "content_chars": 4}]
+        monkeypatch.setattr(loop_mod, "run_agent",
+                            lambda q, kb_id=None, session_id="":
+                            {"answer": "方案已提交", "sources": [], "steps": [],
+                             "degraded": False, "pending_proposals": proposal})
+        monkeypatch.setattr(cs, "log_qa", lambda *a, **k: None)
+        *_, proposals = cs.agent_turn("s5b", AGENT_Q, "valorant")
+        assert proposals == proposal
 
 
 # ---------- /send 端到端 ----------
@@ -121,6 +136,18 @@ class TestSendEndpoint:
         assert data["answer"].startswith("Agent")
         assert data["sources"] == [{"name": "a.md", "id": "d1"}]
         assert calls and calls[0][1] == AGENT_Q
+        assert data["pending_proposals"] == []  # 无方案轮透传空列表
+
+    def test_send_agent_carries_pending_proposals(self, client, monkeypatch):
+        """【W8-卡5.2】Agent 轮的待确认写入方案经 /send 透传给前端（确认卡片素材）"""
+        _patch_prep(monkeypatch, question_for_prompt=AGENT_Q)
+        proposal = [{"proposal_id": "prop_s1", "kb_id": "valorant",
+                     "reason": "用户要求写入", "content_preview": "测试", "content_chars": 2}]
+        _patch_agent_turn(monkeypatch, proposals=proposal)
+        r = client.post("/api/chat/send",
+                        json={"session_id": "rt1b", "question": "帮我把XX加进知识库", "kb_id": "valorant"})
+        assert r.status_code == 200
+        assert r.json()["data"]["pending_proposals"] == proposal
 
     def test_single_hop_dispatches_to_workflow(self, client, monkeypatch):
         _patch_prep(monkeypatch, question_for_prompt=SINGLE_Q)
@@ -170,6 +197,21 @@ class TestStreamEndpoint:
         done = events[-1]["data"]
         assert done["route"]["route"] == "agent"
         assert done["answer"] == "Agent 流式答案"
+        assert done["pending_proposals"] == []
+
+    def test_stream_agent_done_carries_pending_proposals(self, client, monkeypatch):
+        """【W8-卡5.2】Agent 轮方案随 done 事件透传（流式分岔路径）"""
+        _patch_prep(monkeypatch, question_for_prompt=AGENT_Q)
+        proposal = [{"proposal_id": "prop_s2", "kb_id": "law",
+                     "reason": "用户要求", "content_preview": "法条", "content_chars": 2}]
+        _patch_agent_turn(monkeypatch, proposals=proposal)
+        with client.stream("POST", "/api/chat/stream",
+                           json={"session_id": "rt4b", "question": AGENT_Q,
+                                 "kb_id": "valorant"}) as resp:
+            body = b"".join(resp.iter_bytes()).decode("utf-8")
+        done = _parse_sse(body)[-1]
+        assert done["event"] == "done"
+        assert done["data"]["pending_proposals"] == proposal
 
     def test_workflow_done_carries_route_meta(self, client, monkeypatch):
         _patch_prep(monkeypatch, question_for_prompt=SINGLE_Q)

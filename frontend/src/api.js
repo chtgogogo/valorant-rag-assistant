@@ -47,6 +47,8 @@ export async function sendMessageStream(sessionId, question, kbId, { onToken, on
   let buffer = ''
   let finalAnswer = ''
   let finalSources = []
+  let finalRoute = null
+  let finalProposals = []
   let receivedDone = false // v3.10：是否收到 done 事件（流结束却没收到 = SSE 连接中断）
 
   // 解析 SSE：按空行分隔事件，"event: xxx" + "data: {...}"
@@ -81,6 +83,8 @@ export async function sendMessageStream(sessionId, question, kbId, { onToken, on
       } else if (type === 'done') {
         receivedDone = true
         finalAnswer = payload.answer || finalAnswer
+        finalRoute = payload.route || null
+        finalProposals = payload.pending_proposals || [] // 【W8-卡5.2】Agent 轮的待确认写入方案
       }
     }
   }
@@ -91,7 +95,7 @@ export async function sendMessageStream(sessionId, question, kbId, { onToken, on
     err.llmMessage = '网络连接中断，请稍后再试'
     throw err
   }
-  return { answer: finalAnswer, sources: finalSources }
+  return { answer: finalAnswer, sources: finalSources, route: finalRoute, pending_proposals: finalProposals }
 }
 
 // 【W8-卡5】Agent 流式问答（SSE 轨迹版）：onEvent 逐事件回调（tool_call/tool_result/
@@ -132,6 +136,7 @@ export async function sendAgentChatStream(sessionId, question, kbId, { onEvent }
           answer: payload.answer || final.answer,
           sources: payload.sources || [],
           degraded: !!payload.degraded,
+          pending_proposals: payload.pending_proposals || [], // 【W8-卡5.2】待确认写入方案
         }
       } else if (type === 'error') {
         const err = new Error(payload.message || 'Agent 执行失败，请稍后再试')
@@ -195,6 +200,11 @@ export function sendFeedback(sessionId, question, answer, rating, context = null
 // 可用领域列表（前端一键切换知识库）
 export function getDomains() {
   return api.get('/domain/list')
+}
+
+// 【W8-卡5.2】确认知识库写入方案（双因子：proposal_id 一次性凭据 + X-Admin-Key 拦截器自动带）
+export function confirmKbWrite(proposalId) {
+  return api.post('/agent/kb-write/confirm', { proposal_id: proposalId })
 }
 
 // 知识库文档管理

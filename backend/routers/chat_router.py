@@ -34,11 +34,13 @@ def send_message(req: ChatRequest, request: Request):
     # 【W8-卡3】分岔口：多跳/对比/统计/操作类走 Agent，其余走 Workflow（拿不准默认 Workflow）；
     # 门槛拦截/缓存命中等无决策轮 route_meta=None，响应不带 route
     go_agent, route_meta = classify_turn_route(req.session_id, req.question, req.kb_id)
+    pending_proposals: list = []
     if go_agent:
-        answer, sources, history = agent_turn(req.session_id, req.question, req.kb_id)
+        answer, sources, history, pending_proposals = agent_turn(req.session_id, req.question, req.kb_id)
     else:
         answer, sources, history = chat_single_turn(req.session_id, req.question, req.kb_id)
-    resp = ChatResponse(answer=answer, sources=sources, history=history, route=route_meta)
+    resp = ChatResponse(answer=answer, sources=sources, history=history, route=route_meta,
+                        pending_proposals=pending_proposals)
     return ApiResponse(data=resp.model_dump())
 
 # 流式发送接口（v3.0 新增）：SSE 协议，答案逐字推送，前端边收边渲染
@@ -70,11 +72,12 @@ async def stream_message(req: ChatRequest, request: Request):
         # 轨迹逐行流式是 /api/agent/chat/stream（卡 5）的职责，普通聊天分岔到 Agent 不推轨迹
         go_agent, route_meta = classify_turn_route(req.session_id, req.question, req.kb_id)
         if go_agent:
-            answer, sources, history = agent_turn(req.session_id, req.question, req.kb_id)
+            # 【W8-卡5.2】Agent 轮的待确认写入方案随 done 事件透传（前端弹确认卡片）
+            answer, sources, history, pending_proposals = agent_turn(req.session_id, req.question, req.kb_id)
             yield f"event: sources\ndata: {json.dumps({'sources': sources}, ensure_ascii=False)}\n\n"
             yield f"event: token\ndata: {json.dumps({'delta': answer}, ensure_ascii=False)}\n\n"
             done = {"answer": answer, "history": [m.model_dump() for m in history],
-                    "route": route_meta}
+                    "route": route_meta, "pending_proposals": pending_proposals}
             yield f"event: done\ndata: {json.dumps(done, ensure_ascii=False)}\n\n"
             return
         for event in chat_single_turn_stream(req.session_id, req.question, req.kb_id):
