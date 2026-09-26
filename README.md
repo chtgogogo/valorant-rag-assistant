@@ -1,10 +1,38 @@
-# 无畏契约 · 智能问答助手（VALORANT RAG Assistant）
+<h1 align="center">
+  <span style="color:#ff4655;">VALORANT</span>
+  <span>· 智能问答助手</span>
+</h1>
+
+<p align="center">
+  🎯 让每一句回答，都指得出出处
+</p>
+
+<p align="center">
+  <strong>检索增强问答（RAG）</strong> · 三级检索管线 · 拒答兜底 · 评测驱动 · 来源可追溯
+</p>
+
+<p align="center">
 
 ![CI](https://github.com/chtgogogo/valorant-rag-assistant/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Node](https://img.shields.io/badge/Node.js-22%2B-339933?logo=node.js&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
+![Vue](https://img.shields.io/badge/Vue-3-4FC08D?logo=vuedotjs&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+
+</p>
+
+<p align="center">
+  <a href="#-功能亮点">功能亮点</a> ·
+  <a href="#-截图">截图</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#架构">架构</a> ·
+  <a href="#检索效果评估">评测</a> ·
+  <a href="#常见问题">FAQ</a> ·
+  <a href="#路线图">路线图</a>
+</p>
+
+---
 
 把散落在网页、图鉴、攻略里的游戏知识收进一个能版本管理的知识库，让 AI 边检索边回答，每条结论都指得出出处。
 
@@ -12,9 +40,24 @@
 
 这个项目的重点不在"能聊天"。会聊天的机器人满地都是，它要解决的是另一头的问题：回答得有依据，来源能追溯，知识库能维护，**答不上来就明说，不瞎编**。
 
-| 问答（答案带来源） | 拒答兜底（无关问题不硬答） |
+## ✨ 功能亮点
+
+| 亮点 | 说明 |
 |---|---|
-| ![问答界面](docs/screenshots/使用截图1.png) | ![拒答场景](docs/screenshots/拒答场景.png) |
+| 🛡️ **拒答兜底** | 无关问题拦截 **0% → 100%**，消融实验实锤收益全部来自重排序（2026-09-25 复跑） |
+| 🔍 **三级检索管线** | 查询改写（指代消解）→ 混合检索（BM25 + 向量，RRF K=60 融合）→ CrossEncoder 重排序 |
+| ⚡ **语义缓存** | 相似提问命中直接复用，**P50 ≈ 10ms**（未命中付费通道 P50 = 5.7s，2026-09-24 实测），快 3 个数量级 |
+| 🎯 **变体鲁棒性** | 错别字 / 俗称 / 拼音 / 港台译名 **8/8 全命中**（±1 题波动带如实标注） |
+| 🧪 **评测驱动** | 三层评测体系（L1 回归 + L2 扩充 18 题 + L3 标注）+ 消融实验 + 答案忠实度 82.4%（2026-09-25）+ CI 守护线 Hit@5 65.6% |
+| 🖥️ **GPU 加速** | 单条检索约 900ms → 约 110ms（8~10 倍），显存不足 OOM 自动回退 CPU 不中断 |
+| 🔌 **换域零改码** | 复制一个 YAML + 设一个环境变量，切换任意企业知识域（已内置电商售后域） |
+| 🔐 **安全闭环** | 路径穿越 / DOMPurify 抗 XSS / 鉴权常量时间比较 / 提示词注入防护 / 限长限流，安检逐项修复 |
+
+## 📸 截图
+
+| 问答（答案带来源） | 拒答兜底（无关问题不硬答） | 知识库管理 |
+|---|---|---|
+| ![问答界面](docs/screenshots/使用截图1.png) | ![拒答场景](docs/screenshots/拒答场景.png) | ![知识库界面](docs/screenshots/知识库界面.png) |
 
 ## 它解决什么
 
@@ -22,7 +65,7 @@
 
 这里把 VALORANT 资料统一收口成结构化知识库。用户提问先检索资料，再把命中的内容交给大模型组织成答案——拍脑袋回答变成查完资料再回答。回答下方会列出参考了哪些文档块，匹配分数多少；检索不到可靠依据时直接拒答，而不是编一个。
 
-## 功能与特性
+## 🧩 功能与特性
 
 | 能力 | 说明 |
 |------|------|
@@ -235,6 +278,13 @@ API_KEYS=你的密钥1,你的密钥2   # 多个用逗号分隔，请求头带 X-
 
 本项目为个人独立项目，选题、设计、评测与实现均由本人完成，代码由 AI Coding Agent 协作产出，涵盖：检索管线（查询改写 / 混合检索 / CrossEncoder 重排序）、评测体系（20+8 题评测集、双模式对比与消融实验）、领域配置化改造、前后端实现与部署脚本。
 
+## 路线图
+
+- [ ] 对外评测数字逐步切换到 seed=42 冻结 holdout 口径（v3.23 已建 14 题 holdout）
+- [ ] 评测集扩容并引入第二标注者（当前 20+8 题、单一标注者）
+- [ ] 文档级权限隔离（当前 kb_id 为应用层过滤）
+- [ ] 公网演示地址常驻（cpolar 内网穿透方案已备，见 `docs/cpolar部署说明.md`）
+
 ## 更新记录
 
 - **v3.27（2026-09-25）** — Docker 一键部署落地（真机验证）：`docker compose up -d --build` 拉起后端（8001）+ 前端（5174，nginx 反代 /api 并支持 SSE）；密钥经 `.env` 注入不进镜像；会话/审计/上传/向量库/模型缓存五类数据落 named volume 重启不丢；部署步骤沉淀为可复跑的 [`docs/部署验证清单.md`](docs/部署验证清单.md)；快速开始新增 Docker 方式。全量 pytest 回归 + 一键评测无回归。详见 CHANGELOG.md。
@@ -267,6 +317,11 @@ API_KEYS=你的密钥1,你的密钥2   # 多个用逗号分隔，请求头带 X-
 - **v3.0（2026-09-11）** — 三级检索管线上线（查询改写 + 混合检索 + CrossEncoder 重排序），拒答兜底机制，20 题评测集与评估脚本，SSE 流式输出。
 - **v2.0（2026-09-04）** — 知识库管理页、RAG 配置集中化、来源相似度展示，知识源改为可版本管理。
 - **v1.0（2026-07-04）** — 毕设初版：基础问答 + 知识库。
+
+## 🙏 致谢
+
+- [LangChain](https://www.langchain.com/) · [ChromaDB](https://www.trychroma.com/) · [FastAPI](https://fastapi.tiangolo.com/) · [Vue.js](https://vuejs.org/)
+- [BAAI](https://www.baai.ac.cn/)（bge 向量与重排模型） · [智谱开放平台](https://open.bigmodel.cn/)（GLM 系列模型）
 
 ## 许可证
 
