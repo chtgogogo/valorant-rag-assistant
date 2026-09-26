@@ -121,12 +121,15 @@ export function testChat() {
 }
 
 // 提交评价：对一条 AI 回复点赞/点踩（同问题同答案重复评价时后端覆盖原记录）
-export function sendFeedback(sessionId, question, answer, rating) {
+// 【W8-卡6】context = 最近 ≤3 轮完整对话（含本轮），meta = 领域/回答路径/trace_id，供坏例归因分析；旧调用不传兼容
+export function sendFeedback(sessionId, question, answer, rating, context = null, meta = null) {
   return api.post('/feedback', {
     session_id: sessionId,
     question: question,
     answer: answer,
     rating: rating,
+    context: context,
+    meta: meta,
   })
 }
 

@@ -526,11 +526,25 @@ function findQuestion(msg) {
   return ''
 }
 
+// 【W8-卡6】最近 ≤3 轮完整对话（含本轮，每轮 user+assistant 两条）：坏例分析时看"之前问了什么导致这次答歪"
+function buildContext(msg) {
+  const idx = messages.value.indexOf(msg)
+  return messages.value
+    .slice(Math.max(0, idx - 5), idx + 1)
+    .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content && !m.isError)
+    .map((m) => ({ role: m.role, content: m.content }))
+}
+
 async function handleFeedback(msg, rating) {
   if (msg.fb) return // 已评价过，防重评（组件内存状态，不做持久化）
   msg.fb = rating // 先本地置灰再请求，防连点重复提交
   try {
-    await sendFeedback(sessionId, findQuestion(msg), msg.content, rating)
+    // 【W8-卡6】meta：领域即 kb_id；回答路径当前恒为 workflow（Agent 路径上线后按消息来源标注）；trace_id 预留关联 Agent 轨迹
+    await sendFeedback(sessionId, findQuestion(msg), msg.content, rating, buildContext(msg), {
+      domain: currentKb.value,
+      path: 'workflow',
+      trace_id: null,
+    })
     ElMessage.success('感谢反馈')
   } catch {
     msg.fb = null // 提交失败回滚状态，允许重试
