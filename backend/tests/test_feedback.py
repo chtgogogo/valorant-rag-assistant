@@ -114,16 +114,16 @@ class TestLegacyDbMigration:
 
 
 class TestRouter:
-    def test_post_truncates_context_to_three_turns(self, fb_db, client):
-        """router 层兜底截断：前端误传 4 轮（8 条）只留最近 3 轮"""
-        four_turns = [{"role": "user", "content": f"q{i}"} for i in range(8)]
+    def test_post_truncates_context_to_four_turns(self, fb_db, client):
+        """router 层兜底截断：前端误传 5 轮（10 条）只留最近 4 轮"""
+        five_turns = [{"role": "user", "content": f"q{i}"} for i in range(10)]
         resp = client.post("/api/feedback", json={
             "session_id": "s1", "question": "q", "answer": "a", "rating": "down",
-            "context": four_turns, "meta": {"domain": "valorant", "path": "workflow"}})
+            "context": five_turns, "meta": {"domain": "valorant", "path": "workflow"}})
         assert resp.status_code == 200
         assert resp.json()["data"]["action"] == "created"
         ctx = fs.list_recent()[0]["context"]
-        assert ctx == four_turns[-6:]  # 最近 3 轮 = 6 条
+        assert ctx == five_turns[-8:]  # 最近 4 轮 = 8 条
 
     def test_post_legacy_body_compatible(self, fb_db, client):
         """旧格式 body（只有 4 字段）经 router 也不报错"""

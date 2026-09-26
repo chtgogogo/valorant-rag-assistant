@@ -526,11 +526,11 @@ function findQuestion(msg) {
   return ''
 }
 
-// 【W8-卡6】最近 ≤3 轮完整对话（含本轮，每轮 user+assistant 两条）：坏例分析时看"之前问了什么导致这次答歪"
+// 【W8-卡6】最近 4 轮完整对话（含本轮，本轮+前 3 轮共 ≤8 条消息）：坏例分析时看"之前问了什么导致这次答歪"
 function buildContext(msg) {
   const idx = messages.value.indexOf(msg)
   return messages.value
-    .slice(Math.max(0, idx - 5), idx + 1)
+    .slice(Math.max(0, idx - 7), idx + 1)
     .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content && !m.isError)
     .map((m) => ({ role: m.role, content: m.content }))
 }

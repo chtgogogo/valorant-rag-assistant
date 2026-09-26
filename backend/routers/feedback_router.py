@@ -14,7 +14,7 @@ from utils.auth import verify_admin
 
 feedback_router = APIRouter()
 
-_CONTEXT_MAX_TURNS = 3  # 最多保留 3 轮完整对话（每轮 user+assistant 两条，后端兜底截断）
+_CONTEXT_MAX_TURNS = 4  # 最多保留 4 轮完整对话（每轮 user+assistant 两条，后端兜底截断；用户拍板 2026-09-26，卡 6 初版 3 轮）
 
 
 class FeedbackRequest(BaseModel):
