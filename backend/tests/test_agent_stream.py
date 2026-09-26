@@ -114,6 +114,9 @@ class TestStreamEndpoint:
         types = [t for t, _ in frames]
         assert types == ["tool_call", "tool_result", "final_answer", "done"]
         assert frames[-1][1]["answer"] == "答案全文"
+        # 【回归】type 必须同时存在于 data 载荷（前端 onEvent(payload) 靠它分发）——
+        # 曾因后端 pop("type") 导致浏览器轨迹行全部退化为未知类型，SSE 解析测试未覆盖
+        assert all(p.get("type") == t for t, p in frames)
 
     def test_agent_exception_becomes_error_event(self, monkeypatch, client, tmp_path):
         """Agent 本体炸了：SSE 推结构化 error 事件并正常收流，不留悬挂连接（验收 2 的后端底座）"""

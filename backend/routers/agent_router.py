@@ -76,7 +76,9 @@ def agent_chat_stream(req: AgentChatRequest, request: Request):
             ev = events.get()
             if ev is _SENTINEL:
                 break
-            yield _sse(ev.pop("type"), ev)
+            # type 保留在 data 载荷中（event 行与 data 双写）：前端 onEvent(payload)
+            # 依赖 payload.type 分发事件，pop 掉会导致轨迹行全部退化为未知类型
+            yield _sse(ev["type"], ev)
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",

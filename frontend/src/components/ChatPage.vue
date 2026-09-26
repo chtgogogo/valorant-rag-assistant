@@ -601,16 +601,14 @@ async function runAgentTurn(question) {
     }
     traceMsg.sources = final.sources || []
   } catch (err) {
-    if (err && (err.isLlmError || err.isStreamInterrupted)) {
-      // 轨迹区给出失败说明而非卡死（卡 5 验收：断网/故障时轨迹区出现说明）
-      traceMsg.agentTrace.push({ type: 'error', message: err.llmMessage || err.message })
-      if (!answered) {
-        traceMsg.content = err.llmMessage || 'Agent 执行失败，请稍后再试'
-        traceMsg.html = renderMarkdown(traceMsg.content)
-        traceMsg.isError = true
-      }
-    } else {
-      throw err // 非流式异常交给上层统一处理
+    // 轨迹区给出失败说明而非卡死（卡 5 验收：断网/工具故障时轨迹区出现说明）——
+    // SSE 结构化 error、流中断、后端未启动等一律在此消化，不再向上抛
+    const msg = (err && err.llmMessage) || (err && err.message) || 'Agent 执行失败，请稍后再试'
+    traceMsg.agentTrace.push({ type: 'error', message: msg })
+    if (!answered) {
+      traceMsg.content = msg
+      traceMsg.html = renderMarkdown(traceMsg.content)
+      traceMsg.isError = true
     }
   }
 }
