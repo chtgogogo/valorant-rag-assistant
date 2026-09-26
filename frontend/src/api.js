@@ -94,6 +94,65 @@ export async function sendMessageStream(sessionId, question, kbId, { onToken, on
   return { answer: finalAnswer, sources: finalSources }
 }
 
+// 【W8-卡5】Agent 流式问答（SSE 轨迹版）：onEvent 逐事件回调（tool_call/tool_result/
+// final_answer/degraded，未知类型也原样上抛由调用方兜底——加新事件前端零改动），
+// done 时 resolve 完整结果；error 事件抛带 isLlmError 标记的错误（与 Workflow 流式同款约定）
+export async function sendAgentChatStream(sessionId, question, kbId, { onEvent } = {}) {
+  const resp = await fetch('/api/agent/chat/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, question, kb_id: kbId }),
+  })
+  if (!resp.ok || !resp.body) {
+    throw new Error(`Agent 流式接口异常: ${resp.status}`)
+  }
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+  let final = { answer: '', sources: [], degraded: false }
+  let receivedDone = false
+
+  // 解析 SSE：按空行分隔事件（与 sendMessageStream 同款解析）
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const chunks = buffer.split('\n\n')
+    buffer = chunks.pop()
+    for (const chunk of chunks) {
+      const eventLine = chunk.split('\n').find((l) => l.startsWith('event:'))
+      const dataLine = chunk.split('\n').find((l) => l.startsWith('data:'))
+      if (!dataLine) continue
+      let payload
+      try { payload = JSON.parse(dataLine.slice(5).trim()) } catch { continue }
+      const type = eventLine ? eventLine.slice(6).trim() : ''
+      if (type === 'done') {
+        receivedDone = true
+        final = {
+          answer: payload.answer || final.answer,
+          sources: payload.sources || [],
+          degraded: !!payload.degraded,
+        }
+      } else if (type === 'error') {
+        const err = new Error(payload.message || 'Agent 执行失败，请稍后再试')
+        err.isLlmError = true
+        err.llmMessage = payload.message || 'Agent 执行失败，请稍后再试'
+        try { await reader.cancel() } catch { /* 流已自行结束 */ }
+        throw err
+      } else if (onEvent) {
+        onEvent(payload) // tool_call / tool_result / final_answer / degraded / 未来新类型
+      }
+    }
+  }
+  if (!receivedDone) {
+    const err = new Error('网络连接中断，请稍后再试')
+    err.isStreamInterrupted = true
+    err.llmMessage = '网络连接中断，请稍后再试'
+    throw err
+  }
+  return final
+}
+
 // 清空历史
 export function clearHistory(sessionId) {
   return api.post('/chat/clear', null, {

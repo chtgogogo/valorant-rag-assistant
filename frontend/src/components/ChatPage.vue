@@ -150,6 +150,13 @@
           </div>
           <div class="msg-body">
             <div class="msg-bubble" :class="[msg.role, { error: msg.isError }]">
+              <!-- 【W8-卡5】Agent 轨迹：SSE 事件逐行渲染（正在检索→检索完成→整理答案），未来加新事件类型未知行兜底零改动 -->
+              <div v-if="msg.agentTrace && msg.agentTrace.length" class="agent-trace">
+                <div v-for="(t, i) in msg.agentTrace" :key="i" class="trace-line" :class="t.type">
+                  <span class="trace-icon">{{ traceIcon(t) }}</span>
+                  <span class="trace-text">{{ traceText(t) }}</span>
+                </div>
+              </div>
               <div v-if="msg.role === 'assistant'" class="md-body" v-html="msg.html"></div>
               <div v-else class="user-text">{{ msg.content }}</div>
             </div>
@@ -200,6 +207,14 @@
           :disabled="loading"
         ></textarea>
         <span class="input-counter" v-if="inputText.length > 60">{{ inputText.length }}/100</span>
+        <!-- 【W8-卡5】Agent 模式开关：开启后提问走多步检索循环，轨迹逐行实时显示 -->
+        <button
+          class="agent-toggle"
+          :class="{ on: agentMode }"
+          :disabled="loading"
+          @click="toggleAgentMode"
+          title="Agent 模式（试验）：多跳对比类问题自动多步检索，执行轨迹实时可见"
+        >⚡ Agent</button>
         <button
           class="send-btn"
           @click="handleSend"
@@ -222,7 +237,7 @@ import { ref, reactive, nextTick, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { sendMessage, sendMessageStream, clearHistory, rollbackHistory, getHistory, testChat, getDomains, sendFeedback } from '../api.js'
+import { sendMessage, sendMessageStream, sendAgentChatStream, clearHistory, rollbackHistory, getHistory, testChat, getDomains, sendFeedback } from '../api.js'
 
 const emit = defineEmits(['manage'])
 
@@ -421,6 +436,17 @@ async function handleSend() {
   loading.value = true
   scrollToBottom()
 
+  // 【W8-卡5】Agent 模式：走多步检索循环，SSE 轨迹逐行渲染（与 Workflow 流式互不影响）
+  if (agentMode.value) {
+    try {
+      await runAgentTurn(question)
+    } finally {
+      loading.value = false
+      scrollToBottom()
+    }
+    return
+  }
+
   // v3.0：优先走流式接口，答案逐字渲染；流式不可用时降级为普通请求
   try {
     const placeholder = reactive({
@@ -514,6 +540,79 @@ async function handleClear() {
     messages.value = []
     ElMessage.success('对话已清空')
   } catch { /* 取消 */ }
+}
+
+// ---- Agent 模式（W8-卡5）：多步检索循环 + SSE 轨迹实时渲染 ----
+const agentMode = ref(false)
+
+function toggleAgentMode() {
+  agentMode.value = !agentMode.value
+  ElMessage({
+    message: agentMode.value
+      ? 'Agent 模式已开启：多跳对比类问题将多步检索，轨迹实时可见'
+      : '已切回基础问答模式',
+    type: agentMode.value ? 'success' : 'info',
+  })
+}
+
+// 轨迹行图标/文案（事件协议：tool_call/tool_result/final_answer/degraded，未知类型兜底）
+function traceIcon(t) {
+  return { tool_call: '🔍', tool_result: t.ok === false ? '⚠️' : '✅',
+           final_answer: '📝', degraded: '⚠️', error: '❌' }[t.type] || '·'
+}
+function traceText(t) {
+  switch (t.type) {
+    case 'tool_call': return `正在检索「${(t.args && t.args.query) || ''}」…`
+    case 'tool_result': return `检索${t.ok === false ? '失败' : '完成'}：${t.summary || ''}`
+    case 'final_answer': return '整理答案…'
+    case 'degraded': return `${t.reason || '检索未成功'}，已回落基础问答模式`
+    case 'error': return t.message || 'Agent 执行失败'
+    default: return t.type // 未来新事件类型：原样显示，不崩不丢
+  }
+}
+
+async function runAgentTurn(question) {
+  const traceMsg = reactive({
+    id: ++msgCounter,
+    role: 'assistant',
+    content: '',
+    html: '',
+    sources: [],
+    time: getTime(),
+    agentTrace: [], // SSE 事件流（逐行上屏）
+  })
+  messages.value.push(traceMsg)
+  let answered = false
+  try {
+    const final = await sendAgentChatStream(sessionId, question, currentKb.value, {
+      onEvent: (ev) => {
+        traceMsg.agentTrace.push(ev)
+        if (ev.type === 'final_answer' || ev.type === 'degraded') {
+          answered = true
+          traceMsg.content = ev.answer || ''
+          traceMsg.html = renderMarkdown(traceMsg.content)
+        }
+        scrollToBottom()
+      },
+    })
+    if (!answered) { // 兜底：流结束却没有任何终答事件，也要保证答案上屏
+      traceMsg.content = final.answer
+      traceMsg.html = renderMarkdown(final.answer)
+    }
+    traceMsg.sources = final.sources || []
+  } catch (err) {
+    if (err && (err.isLlmError || err.isStreamInterrupted)) {
+      // 轨迹区给出失败说明而非卡死（卡 5 验收：断网/故障时轨迹区出现说明）
+      traceMsg.agentTrace.push({ type: 'error', message: err.llmMessage || err.message })
+      if (!answered) {
+        traceMsg.content = err.llmMessage || 'Agent 执行失败，请稍后再试'
+        traceMsg.html = renderMarkdown(traceMsg.content)
+        traceMsg.isError = true
+      }
+    } else {
+      throw err // 非流式异常交给上层统一处理
+    }
+  }
 }
 
 // ---- 用户反馈（v3.8）：对 assistant 回复点赞/点踩 ----
@@ -1750,5 +1849,63 @@ async function handleRollback() {
   .tool-btn-text { display: none; }   /* "知识库"文字按钮收起，图标按钮保留 */
   .brand-text p { display: none; }
 }
+
+/* 【W8-卡5】Agent 轨迹行：气泡内上方的小字状态列表，逐行随 SSE 事件出现 */
+.agent-trace {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  border-left: 2px solid var(--val-teal);
+  background: rgba(15, 25, 35, 0.45);
+  border-radius: var(--val-radius-sm);
+}
+.trace-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--val-text);
+  opacity: 0.85;
+  animation: trace-in 0.25s ease-out;
+}
+.trace-line.degraded .trace-text,
+.trace-line.error .trace-text { color: var(--val-red); }
+.trace-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 520px;
+}
+@keyframes trace-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 0.85; transform: translateY(0); }
+}
+
+/* Agent 模式开关：输入框左侧的战术风小按钮，点亮=已开启 */
+.agent-toggle {
+  align-self: center;
+  margin-right: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--val-text);
+  background: transparent;
+  border: 1px solid var(--val-border);
+  border-radius: var(--val-radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.agent-toggle:hover { border-color: var(--val-teal); }
+.agent-toggle.on {
+  color: #0f1923;
+  background: var(--val-teal);
+  border-color: var(--val-teal);
+}
+.agent-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
 
