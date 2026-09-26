@@ -18,6 +18,7 @@ from utils.audit import (log_qa, usage_from_response, estimate_tokens,
                          record_call, summarize_usage)
 from services.official_data_service import answer_official_data_query, expand_query_aliases, replace_aliases_with_official
 from services.llm_factory import make_llm
+from services.router_service import ROUTE_AGENT, route_query  # 【W8-卡3】规则路由（纯函数，零依赖）
 from services.semantic_cache import get_semantic_cache
 
 import logging
@@ -522,6 +523,50 @@ def _prepare_turn(session_id: str, question: str, kb_id: str, P: dict) -> dict:
     cached = cache.lookup(question_for_prompt, kb_id) if cache else None
     return {"kind": "retrieve", "question_for_prompt": question_for_prompt,
             "history": history, "cache": cache, "cached": cached}
+
+
+# ============================================================
+# 【W8-卡3】分岔口：单跳走 Workflow、多跳/对比/统计/操作类走 Agent
+# ------------------------------------------------------------
+# 设计约束（为什么是独立函数而不是塞进 chat_single_turn）：
+#   1. 卡 2 的失败降级 _degrade_to_workflow 会拿同一个多跳问题直调 chat_single_turn——
+#      分岔若在其内部，降级会再次命中 Agent 规则 → Agent→降级→Agent 无限递归；
+#      独立分岔函数让降级路径在结构上不可能重入 Agent。
+#   2. chat_single_turn 返回 3 元组的契约不变，既有调用方与测试零感知。
+#   3. /api/chat/send 与 /api/chat/stream 共用同一份判定（单一事实源）。
+# ============================================================
+
+def classify_turn_route(session_id: str, question: str, kb_id: str = None) -> tuple[bool, dict | None]:
+    """【W8-卡3】分岔口判定（/send 与 /stream 共用）：
+    先过 _prepare_turn 全部前置门槛（敏感词/超长/注入/关键词规则/官方直答/语义缓存），
+    只有"确实需要检索回答"的问题才参与路由——门槛拦截与缓存命中轮不做路由决策。
+    :return: (是否进 Agent, 路由 meta)；meta=None 表示本轮没有路由决策
+             （敏感/规则/官方/缓存命中等），响应不带 route 字段——不装作路由过，诚实可解释
+    """
+    kb_id = resolve_kb_id(kb_id)
+    P = get_profile(kb_id)
+    prep = _prepare_turn(session_id, question, kb_id, P)
+    if prep["kind"] != "retrieve" or prep["cached"]:
+        return False, None
+    decision = route_query(prep["question_for_prompt"])
+    meta = {"route": decision.route, "reason": decision.reason}
+    return decision.route == ROUTE_AGENT, meta
+
+
+def agent_turn(session_id: str, question: str, kb_id: str = None) -> tuple[str, list[dict], list[ChatMessage]]:
+    """【W8-卡3】Agent 分支执行 + 落账：与 Workflow 轮同款待遇（写历史 + 审计 pipeline=agent）。
+    递归安全：卡 2 降级路径 _degrade_to_workflow 直调 chat_single_turn、不经过本函数，
+    Agent 分支在结构上不可能重入。token 账本暂缺（run_agent 未接 usage_ledger），
+    审计不记 token_usage——宁可空缺不编数字。"""
+    from services.agent.loop import run_agent  # 延迟 import：loop 携带 llm_factory 重依赖
+    kb_id = resolve_kb_id(kb_id)
+    start_time = time.time()
+    result = run_agent(question, kb_id=kb_id, session_id=session_id)
+    answer, sources = result["answer"], result["sources"]
+    history = append_history(session_id, question, answer)
+    log_qa(session_id, question, question, sources, answer,
+           (time.time() - start_time) * 1000, kb_id, "agent")
+    return answer, sources, history
 
 
 def chat_single_turn(session_id: str, question: str, kb_id: str = None) -> tuple[str, list[dict], list[ChatMessage]]:

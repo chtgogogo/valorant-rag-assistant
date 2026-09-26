@@ -36,7 +36,9 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     answer: str  # Markdown格式的回答
     sources: List[Dict]  # 引用来源：[{"name": "文档名", "id": "文档id"}]
-    history: List[ChatMessage]  # 最新对话历史# 【W8-卡1】Agent 请求结构（复用 ChatRequest 的三层防线：pattern/长度/kb白名单）
+    history: List[ChatMessage]  # 最新对话历史
+    route: Optional[Dict] = None  # 【W8-卡3】路由决策 meta {"route": "agent"/"workflow", "reason": "…"}；门槛拦截/缓存命中等无决策轮为 null（可解释性，前端可忽略）
+# 【W8-卡1】Agent 请求结构（复用 ChatRequest 的三层防线：pattern/长度/kb白名单）
 class AgentChatRequest(BaseModel):
     session_id: str = Field(pattern=r"^[\w\-]{1,64}$")  # 会话ID，隔离不同用户
     question: str = Field(max_length=1000)  # 用户问题

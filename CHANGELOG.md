@@ -5,6 +5,24 @@
 
 ---
 
+## W8-卡3（2026-09-27）· 规则路由器接线 + 评测扩充（「单跳 Workflow / 多跳 Agent」分岔口落地）
+
+**新增了什么**
+- 分岔口进 chat 主链路：`chat_service` 新增 `classify_turn_route`（/send 与 /stream 共用的同一份判定，单一事实源）与 `agent_turn`（Agent 分支执行 + 写会话历史 + 审计 pipeline=agent）；`/api/chat/send` 与 `/api/chat/stream` 按规则路由自动分流——多跳/对比/统计/操作类走 Agent，其余走 Workflow（拍板 D3：拿不准默认 Workflow）。普通聊天不手动开 Agent 模式也能自动享受多跳检索，前端零改动。
+- 路由决策随响应透传（可解释性）：`ChatResponse` 新增 `route` 字段 `{"route": "agent"/"workflow", "reason": "命中哪条规则"}`，流式 `done` 事件同款携带；敏感词/规则/官方直答/缓存命中轮不产路由决策（route=null——没路由过就不装作路由过）。
+- 评测脚本 `scripts/eval_agent_route.py`，报告含任务卡要求的两列：**路由准确率**（16 题规则实判）与**双路径事实错误对照**（`--with-llm` 真跑 A01~A10：Workflow 检索管线直连 vs Agent 完整循环，LLM 裁判对照知识库资料数错误，即卡 1 顺延、卡 7 完成后并入卡 3 的 10 题基线）。
+- 接线回归测试 `tests/test_route_wiring.py` 13 用例：判定四类（门槛拦截/缓存命中不路由）、/send 与 /stream 端到端分流、SSE 事件序、敏感词+操作词守门、agent_turn 落账、卡 2 降级不重入分岔口。
+
+**解决了什么问题**
+- 「单跳走 Workflow、多跳走 Agent」从纯函数变成真实可用的链路，且安全顺序正确：前置门槛（敏感词/注入/超长/关键词规则/官方直答/语义缓存）先行于路由，Agent 永远接不到本该拦截的问题；分岔函数独立于 `chat_single_turn`，卡 2 失败降级直连 Workflow——Agent→降级→Agent 的无限递归在结构上不可能发生（测试钉死）。
+- 顺手根治 v3.24 既有 bug：限流 SSE 降级生成器闭包引用 `except ... as e` 的 `e`，而 except 块结束即 `del e`——真实撞限流时用户会收到 NameError 断流而非友好提示（此前从未被触发到）。改为先捕获 message 再进闭包，并补回归钉子测试。
+
+**验证**
+- 路由准确率 16/16 = 100%（报告 `eval/reports/report_agent_route_20260927_025910.md`）；双路径对照真跑数字见同目录最新 `report_agent_route_*.md`。
+- 全量 pytest 240 用例 0 失败（exit=0，`CUDA_VISIBLE_DEVICES=""` 口径，本机 CUDA 状态坑见 UPGRADE_STATE 快照）。
+
+---
+
 ## W8-卡4（2026-09-27）· 动作类工具 + 知识库写入人工确认门（D4 拍板落地）
 
 **新增了什么**

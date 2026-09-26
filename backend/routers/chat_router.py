@@ -25,28 +25,39 @@ async def test_chat_module():
 # 【卡10】同步改 def：内部 chat_single_turn 含 LLM 秒级调用+rerank 推理，
 # async def 内直调会阻塞事件循环（期间全站请求排队）；FastAPI 对同步 def 自动走线程池
 def send_message(req: ChatRequest, request: Request):
-    from services.chat_service import chat_single_turn
+    from services.chat_service import chat_single_turn, classify_turn_route, agent_turn
     try:
         check_chat_rate_limit(_client_ip(request))  # 【v3.24】IP 双层限流：超限 429
     except RateLimitExceeded as e:
         raise HTTPException(status_code=429, detail=e.message)
     resolve_kb_id(req.kb_id)  # 【v3.20】kb_id 白名单：非法 400 / 未知 404，不再静默回退
-    answer, sources, history = chat_single_turn(req.session_id, req.question, req.kb_id)
-    resp = ChatResponse(answer=answer, sources=sources, history=history)
+    # 【W8-卡3】分岔口：多跳/对比/统计/操作类走 Agent，其余走 Workflow（拿不准默认 Workflow）；
+    # 门槛拦截/缓存命中等无决策轮 route_meta=None，响应不带 route
+    go_agent, route_meta = classify_turn_route(req.session_id, req.question, req.kb_id)
+    if go_agent:
+        answer, sources, history = agent_turn(req.session_id, req.question, req.kb_id)
+    else:
+        answer, sources, history = chat_single_turn(req.session_id, req.question, req.kb_id)
+    resp = ChatResponse(answer=answer, sources=sources, history=history, route=route_meta)
     return ApiResponse(data=resp.model_dump())
 
 # 流式发送接口（v3.0 新增）：SSE 协议，答案逐字推送，前端边收边渲染
 @chat_router.post("/stream", summary="流式发送消息（SSE）")
 async def stream_message(req: ChatRequest, request: Request):
-    from services.chat_service import chat_single_turn_stream
+    from services.chat_service import chat_single_turn_stream, classify_turn_route, agent_turn
     # 【v3.20】kb_id 必须在开流前校验：放进生成器里抛 HTTPException 只会变成断流而非 4xx 响应
     resolve_kb_id(req.kb_id)
     # 【v3.24】限流同样在开流前：超限以 SSE error 事件收尾（流式无 HTTPException 语义）
     try:
         check_chat_rate_limit(_client_ip(request))
     except RateLimitExceeded as e:
+        # 闭包先捕获 message：except 块结束即 del e，延迟执行的生成器里访问 e 会
+        # NameError（v3.24 既有坑——真实撞限流时用户收到断流而非友好提示，
+        # W8-卡3 接线测试触发后顺手根治）
+        limited_message = e.message
+
         def limited_stream():
-            yield f"event: error\ndata: {json.dumps({'type': 'error', 'code': 'rate_limited', 'message': e.message}, ensure_ascii=False)}\n\n"
+            yield f"event: error\ndata: {json.dumps({'type': 'error', 'code': 'rate_limited', 'message': limited_message}, ensure_ascii=False)}\n\n"
         return StreamingResponse(
             limited_stream(),
             media_type="text/event-stream",
@@ -54,8 +65,23 @@ async def stream_message(req: ChatRequest, request: Request):
         )
 
     def event_stream():
+        # 【W8-卡3】分岔口（与 /send 同一份判定，放在同步生成器里 → 线程池迭代，
+        # 首次 embedding 冷加载不阻塞事件循环）：Agent 分支一次性产出——
+        # 轨迹逐行流式是 /api/agent/chat/stream（卡 5）的职责，普通聊天分岔到 Agent 不推轨迹
+        go_agent, route_meta = classify_turn_route(req.session_id, req.question, req.kb_id)
+        if go_agent:
+            answer, sources, history = agent_turn(req.session_id, req.question, req.kb_id)
+            yield f"event: sources\ndata: {json.dumps({'sources': sources}, ensure_ascii=False)}\n\n"
+            yield f"event: token\ndata: {json.dumps({'delta': answer}, ensure_ascii=False)}\n\n"
+            done = {"answer": answer, "history": [m.model_dump() for m in history],
+                    "route": route_meta}
+            yield f"event: done\ndata: {json.dumps(done, ensure_ascii=False)}\n\n"
+            return
         for event in chat_single_turn_stream(req.session_id, req.question, req.kb_id):
             event_type = event.pop("type")
+            # 【W8-卡3】路由决策随 done 事件透传（可解释性；前端对未知字段天然忽略）
+            if event_type == "done" and route_meta is not None:
+                event["route"] = route_meta
             yield f"event: {event_type}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
