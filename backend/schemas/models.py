@@ -36,4 +36,23 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     answer: str  # Markdown格式的回答
     sources: List[Dict]  # 引用来源：[{"name": "文档名", "id": "文档id"}]
-    history: List[ChatMessage]  # 最新对话历史
+    history: List[ChatMessage]  # 最新对话历史# 【W8-卡1】Agent 请求结构（复用 ChatRequest 的三层防线：pattern/长度/kb白名单）
+class AgentChatRequest(BaseModel):
+    session_id: str = Field(pattern=r"^[\w\-]{1,64}$")  # 会话ID，隔离不同用户
+    question: str = Field(max_length=1000)  # 用户问题
+    kb_id: Optional[str] = "valorant"  # 默认无畏契约知识库
+# Agent 单步轨迹（前端逐行渲染"正在检索…"的素材，卡 5 启用）
+class AgentStep(BaseModel):
+    step: int  # 第几步
+    type: str  # tool_call / final
+    tool: Optional[str] = None  # 工具名
+    args: Optional[Dict] = None  # 工具参数
+    summary: str  # 结果摘要（截断）
+    ok: Optional[bool] = None  # 工具是否执行成功
+    elapsed_ms: int = 0  # 本步耗时
+# Agent 返回结构（对话服务 → 前端）
+class AgentChatResponse(BaseModel):
+    answer: str  # Markdown格式的最终答案
+    sources: List[Dict]  # 引用来源：[{"name": "文档名", "id": "文档id"}]
+    steps: List[AgentStep]  # 执行轨迹
+    degraded: bool = False  # 是否触发了未完成/降级（卡 2 起有真实降级路径）
