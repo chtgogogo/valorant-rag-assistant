@@ -148,9 +148,31 @@ def clean_text(text: str) -> str:
 
 # -------------------------- 文本拆分 --------------------------
 
+def _split_by_headings(text: str) -> list[tuple[str, str]]:
+    """按 markdown 标题（#/##/###/####）把全文预分段
+    :return: [(所属标题, 段文本), ...]——首个标题前的导语段标题为 ""
+    【W8-卡7】根治"标题与内容分家"：原切分器按字符边界切，标题可能留在
+    上一块尾部、内容块成了无主切片（实测：雷兹技能表格不含"雷兹"字样，
+    查"雷兹"永远命中尾部借走标题的芮娜切片——卡1重放实验 §3 实锤）。
+    """
+    import re
+    matches = list(re.finditer(r"^#{1,4} .+$", text, flags=re.M))
+    if not matches:
+        return [("", text)]
+    sections = []
+    if matches[0].start() > 0:
+        sections.append(("", text[:matches[0].start()]))
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        sections.append((m.group(0).strip(), text[m.start():end]))
+    return sections
+
+
 def split_text(text: str, chunk_size: int = None, chunk_overlap: int = None) -> list[str]:
     """
     用 LangChain 的递归字符拆分器切分文本
+    【W8-卡7】切分前先按标题预分段，每块前置所属标题——让每块自带身份，
+    检索词命中标题即可带出正确内容（工单等无标题文本走原逻辑不受影响）
     :param chunk_size: 每块最大字符数
     :param chunk_overlap: 相邻块重叠字符数
     :return: 切好的文本块列表
@@ -165,7 +187,13 @@ def split_text(text: str, chunk_size: int = None, chunk_overlap: int = None) -> 
         chunk_overlap=chunk_overlap,
         separators=["\n\n", "\n", "。", "！", "？", "；", ".", "!", "?", ";", " ", ""]
     )
-    return splitter.split_text(text)
+    out: list[str] = []
+    for heading, section in _split_by_headings(text):
+        for piece in splitter.split_text(section):
+            # 段文本本身以标题开头时（标题行总在段首）不重复前置
+            out.append(piece if piece.startswith(heading)
+                       else f"{heading}\n{piece}" if heading else piece)
+    return out
 
 
 # -------------------------- 上传文档全流程 --------------------------
