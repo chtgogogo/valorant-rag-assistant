@@ -69,4 +69,12 @@ if __name__ == "__main__":
     # 等于白白多占约 1.6GB 内存，而且一改文件就把子进程连同模型重载一遍。
     # 需要改代码即时生效时：先设环境变量 DEV_RELOAD=1 再启动。
     DEV_RELOAD = os.getenv("DEV_RELOAD", "0") == "1"
+    # 【v3.33】数据卷运维维护（会话过期清理 + 审计归档轮转）：只在真实启动
+    # 服务时拉起守护线程（先清一轮再周期轮询）；放 __main__ 而非模块顶层，
+    # 测试/评测 import app 时零副作用。OPS_MAINTENANCE=0 可关。
+    from config.settings import MAINTENANCE_CONFIG
+    if MAINTENANCE_CONFIG["enabled"]:
+        from utils.ops_maintenance import start_maintenance_daemon
+        start_maintenance_daemon()
+        print("[运维维护] 已启动：会话过期清理 + 审计归档轮转（守护线程）")
     uvicorn.run("main:app", host=SERVER_HOST, port=SERVER_PORT, reload=DEV_RELOAD)

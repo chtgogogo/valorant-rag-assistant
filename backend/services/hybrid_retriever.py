@@ -7,13 +7,14 @@
 # 这是 RAGFlow / QAnything 等企业级 RAG 的标准做法。
 # ------------------------------------------------------------
 import hashlib
+import os
 import threading
 
 import chromadb
 import jieba
 from rank_bm25 import BM25Okapi
 
-from config.settings import VECTOR_DB_PATH, RAG_CONFIG, DEFAULT_KB_ID
+from config.settings import VECTOR_DB_PATH, RAG_CONFIG, DEFAULT_KB_ID, CACHE_CONFIG
 from schemas.models import SearchResult
 from services.vector_service import search_vector, _get_chroma_client
 
@@ -23,12 +24,17 @@ logger = logging.getLogger(__name__)
 # RRF 常数：排名越靠前贡献越大，60 是论文推荐值
 RRF_K = 60
 
-# BM25 索引缓存：kb_id -> {"bm25", "docs", "metadatas", "ids", "count", "fingerprint"}
+# BM25 索引缓存：kb_id -> {"bm25", "docs", "metadatas", "ids", "count", "fingerprint", "epoch_mtime"}
 # 【v3.21】新鲜度机制（原"count 变化自动重建"与事实不符——删 1 篇加 1 篇 count 不变，
-# 索引会永久陈旧）：每次取索引时拉取该库全量块的 id+内容，排序后整体算 SHA-256 指纹，
-# 指纹与缓存一致才复用，任何增/删/换内容都会改变指纹并触发重建。
-# 代价是每次检索多一次 chroma 全量 get（几百块 <10ms），远便宜于重复重建 BM25 索引
-# （jieba 全量分词 + TF-IDF 矩阵，秒级）。
+# 索引会永久陈旧）：指纹与缓存一致才复用，任何增/删/换内容都会改变指纹并触发重建。
+# 【v3.33】校验时机降本：v3.21 是"每次查询都全量拉块算指纹"（每查询 O(N)，几百块
+# <10ms，但几万块时每次点菜先翻整本菜谱）；现在改为两层 O(1) 快检前置——
+#   ① kb_epoch 信号文件 mtime（所有写路径都会 touch：上传/删除/离线重建脚本）；
+#   ② collection.count()。
+# 两者都没变 → 直接复用索引（绝大多数查询走这里，零全量 IO）；任一变化 → 才做
+# 一次全量指纹校验。指纹仍是最终裁决（语义与 v3.21 完全一致），只是裁决时机从
+# "每次查询"收敛为"变更信号触发时"。已知取舍：绕过全部写路径、直接改 chroma
+# 库文件的改动不会被感知（此前除全量校验外无任何机制能覆盖这种场景）。
 # 重建锁为 per-kb 粒度：一个知识库重建不再阻塞其他知识库的检索。
 _bm25_cache: dict = {}
 _bm25_locks: dict = {}
@@ -41,6 +47,14 @@ def _get_kb_lock(kb_id: str) -> threading.Lock:
         if kb_id not in _bm25_locks:
             _bm25_locks[kb_id] = threading.Lock()
         return _bm25_locks[kb_id]
+
+
+def _read_kb_epoch_mtime() -> float:
+    """知识库变更信号文件的 mtime（不存在/读不到=0.0，语义=从未变更过）"""
+    try:
+        return os.path.getmtime(CACHE_CONFIG["epoch_path"])
+    except OSError:
+        return 0.0
 
 
 def _kb_fingerprint(ids: list, docs: list) -> str:
@@ -61,18 +75,26 @@ def _tokenize(text: str) -> list[str]:
 
 def _get_bm25_index(kb_id: str) -> dict | None:
     """获取（或构建）知识库的 BM25 索引；空知识库返回 None
-    【v3.21】按内容指纹判断新鲜度（不再信 count），重建持 per-kb 锁"""
+    【v3.21】按内容指纹判断新鲜度（不再信 count），重建持 per-kb 锁
+    【v3.33】epoch+count 两层 O(1) 快检前置，指纹只在变更信号触发时才算"""
     client = _get_chroma_client()
-    current_count = client.get_or_create_collection(
+    collection = client.get_or_create_collection(
         name=kb_id, metadata={"hnsw:space": "cosine"}
-    ).count()
+    )
+    current_count = collection.count()
     if current_count == 0:
         with _get_kb_lock(kb_id):
             _bm25_cache.pop(kb_id, None)  # 知识库被清空：旧索引必须失效
         return None
+    epoch_mtime = _read_kb_epoch_mtime()
 
-    # 拉全量文档块（毕设级知识库几百条）：既用于指纹计算，也用于重建索引
-    collection = client.get_collection(kb_id)
+    # O(1) 快路径：变更信号与 count 都没动 → 直接复用，跳过全量拉块+指纹
+    with _get_kb_lock(kb_id):
+        cached = _bm25_cache.get(kb_id)
+        if cached and cached["count"] == current_count and cached["epoch_mtime"] == epoch_mtime:
+            return cached
+
+    # 慢路径（知识库真的变过）：拉全量文档块，既用于指纹校验也用于重建
     data = collection.get(include=["documents", "metadatas"])
     docs = data.get("documents") or []
     if not docs:
@@ -84,11 +106,15 @@ def _get_bm25_index(kb_id: str) -> dict | None:
     with _get_kb_lock(kb_id):
         cached = _bm25_cache.get(kb_id)
         if cached and cached["fingerprint"] == fingerprint:
-            return cached  # double-check：等锁期间别的线程可能已按同指纹建好
+            # double-check：等锁期间别的线程可能已按同指纹建好；
+            # 内容没变则只刷新信号水位，下次查询回到 O(1) 快路径
+            cached["epoch_mtime"] = epoch_mtime
+            return cached
 
         bm25 = BM25Okapi([_tokenize(d) for d in docs])
         entry = {"bm25": bm25, "docs": docs, "metadatas": metadatas,
-                 "ids": ids, "count": current_count, "fingerprint": fingerprint}
+                 "ids": ids, "count": current_count, "fingerprint": fingerprint,
+                 "epoch_mtime": epoch_mtime}
         _bm25_cache[kb_id] = entry
         logger.info("BM25 索引已构建: kb=%s 文档块=%d 指纹=%s…", kb_id, current_count, fingerprint[:8])
         return entry

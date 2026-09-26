@@ -232,6 +232,34 @@ RATE_LIMIT_CONFIG = {
     "enabled": os.getenv("RATE_LIMIT_ENABLED", "1") == "1",
     "per_minute": int(os.getenv("RATE_LIMIT_CHAT_PER_MIN", "5")),  # 每分钟提问上限（挡刷屏脚本）
     "daily": int(os.getenv("RATE_LIMIT_CHAT_DAILY", "100")),       # 每日提问上限（挡长期薅）
+    # 【v3.33】生成并发闸门：生成类请求的有界并发 + 有界排队。
+    # 同步路由共享 uvicorn 线程池（默认约 40 席），两个值之和必须 < 40，
+    # 否则闸门自己就会把线程池占满、饿死上传/列表等轻接口
+    "max_concurrent": int(os.getenv("GEN_MAX_CONCURRENT", "8")),
+    "max_queue": int(os.getenv("GEN_MAX_QUEUE", "24")),
+    "queue_timeout": int(os.getenv("GEN_QUEUE_TIMEOUT_SEC", "60")),  # 排队最长等待（秒），超时按队满拒绝
+}
+
+# ------------------------------------------------------
+# 5.3.2 上传容量配额（v3.33）：单文件上限已有 MAX_FILE_SIZE（router 强制），
+#       补每知识库文档数与上传目录总量两道闸——上传是唯一能被普通用户
+#       无限写磁盘的入口（报告"存储会被流水账塞满"第三道坎③）
+# ------------------------------------------------------
+UPLOAD_QUOTA = {
+    "max_docs_per_kb": int(os.getenv("UPLOAD_MAX_DOCS_PER_KB", "50")),
+    "max_total_mb": int(os.getenv("UPLOAD_MAX_TOTAL_MB", "200")),
+}
+
+# ------------------------------------------------------
+# 5.5 数据卷运维维护配置（v3.33）：会话历史过期清理 + 审计日志归档轮转
+#     报告第三道坎①②：会话 JSON 与审计 jsonl 只增不减，一年后是几十万个
+#     碎文件/几十万行明文。审计含哈希链不能直接删，改无损 gzip 归档。
+# ------------------------------------------------------
+MAINTENANCE_CONFIG = {
+    "enabled": os.getenv("OPS_MAINTENANCE", "1") == "1",
+    "session_retention_days": int(os.getenv("SESSION_RETENTION_DAYS", "30")),  # 会话 N 天没动自动清理
+    "audit_retention_months": int(os.getenv("AUDIT_RETENTION_MONTHS", "6")),   # 审计超 N 个月 gzip 归档
+    "interval_hours": float(os.getenv("MAINTENANCE_INTERVAL_HOURS", "6")),     # 维护轮询间隔
 }
 
 # ------------------------------------------------------

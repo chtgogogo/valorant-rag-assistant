@@ -9,7 +9,7 @@ import uuid
 from docx import Document as DocxDocument
 from pypdf import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from config.settings import UPLOAD_PATH, ALLOWED_EXTENSIONS, RAG_CONFIG
+from config.settings import UPLOAD_PATH, ALLOWED_EXTENSIONS, RAG_CONFIG, UPLOAD_QUOTA
 from schemas.models import DocumentChunk
 from services.vector_service import add_chunks, delete_doc_vectors
 from services.semantic_cache import touch_kb_epoch
@@ -196,16 +196,43 @@ def split_text(text: str, chunk_size: int = None, chunk_overlap: int = None) -> 
     return out
 
 
+# -------------------------- 上传配额（v3.33） --------------------------
+
+def _check_upload_quota(kb_id: str):
+    """上传前的容量闸：每知识库文档数上限 + 上传目录总量上限。
+    在解析/向量化等重活之前就拒绝，不让超限请求白耗算力。
+    竞态说明：检查与登记之间没有同一把锁（登记锁在入库后），并发窗口内
+    可能小幅超限——配额定位是防滥用兜底而非精确计费，可接受。"""
+    doc_list = _load_doc_list(kb_id)
+    max_docs = UPLOAD_QUOTA["max_docs_per_kb"]
+    if max_docs > 0 and len(doc_list) >= max_docs:
+        raise ValueError(f"知识库文档数已达上限（{max_docs} 篇），请先删除部分旧文档再上传")
+
+    max_total_mb = UPLOAD_QUOTA["max_total_mb"]
+    if max_total_mb > 0 and os.path.isdir(UPLOAD_PATH):
+        total = 0
+        for name in os.listdir(UPLOAD_PATH):
+            try:
+                total += os.path.getsize(os.path.join(UPLOAD_PATH, name))
+            except OSError:
+                pass
+        if total >= max_total_mb * 1024 * 1024:
+            raise ValueError(f"上传空间已满（总量上限 {max_total_mb}MB），请联系管理员清理后再试")
+
+
 # -------------------------- 上传文档全流程 --------------------------
 
 def upload_and_process(file_path: str, filename: str, kb_id: str = "valorant") -> list[DocumentChunk]:
     """
-    文档上传全流程：解析 → 清洗 → 拆分 → 入库 → 记录元数据
+    文档上传全流程：配额检查 → 解析 → 清洗 → 拆分 → 入库 → 记录元数据
     :return: 切好的文档块列表
     """
     ext = filename.rsplit(".", 1)[-1].lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise ValueError(f"不支持的文件格式: {ext}，仅支持 {ALLOWED_EXTENSIONS}")
+
+    # 【v3.33】容量闸先行：超限直接拒绝，不进解析/向量化的重活
+    _check_upload_quota(kb_id)
 
     # 1. 解析文档
     raw_text = parse_document(file_path, ext)

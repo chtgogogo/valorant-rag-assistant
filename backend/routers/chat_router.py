@@ -4,6 +4,7 @@ import json
 from config.settings import resolve_kb_id
 from schemas.models import ApiResponse, ChatRequest, ChatResponse, ChatMessage
 from utils.rate_limit import check_chat_rate_limit, RateLimitExceeded
+from utils.concurrency_gate import get_generation_gate, GateFull  # 【v3.33】并发排队闸门
 chat_router = APIRouter()
 
 
@@ -31,16 +32,22 @@ def send_message(req: ChatRequest, request: Request):
     except RateLimitExceeded as e:
         raise HTTPException(status_code=429, detail=e.message)
     resolve_kb_id(req.kb_id)  # 【v3.20】kb_id 白名单：非法 400 / 未知 404，不再静默回退
-    # 【W8-卡3】分岔口：多跳/对比/统计/操作类走 Agent，其余走 Workflow（拿不准默认 Workflow）；
-    # 门槛拦截/缓存命中等无决策轮 route_meta=None，响应不带 route
-    go_agent, route_meta = classify_turn_route(req.session_id, req.question, req.kb_id)
-    pending_proposals: list = []
-    if go_agent:
-        answer, sources, history, pending_proposals = agent_turn(req.session_id, req.question, req.kb_id)
-    else:
-        answer, sources, history = chat_single_turn(req.session_id, req.question, req.kb_id)
-    resp = ChatResponse(answer=answer, sources=sources, history=history, route=route_meta,
-                        pending_proposals=pending_proposals)
+    # 【v3.33】并发闸门：同步 def 在线程池里排队等位（8 并发 + 24 队列 < 40 席，
+    # 闸门永远给轻接口留席），队满/超时 429——把"占满线程池拖垮全站"变成"排队提示"
+    try:
+        with get_generation_gate():
+            # 【W8-卡3】分岔口：多跳/对比/统计/操作类走 Agent，其余走 Workflow（拿不准默认 Workflow）；
+            # 门槛拦截/缓存命中等无决策轮 route_meta=None，响应不带 route
+            go_agent, route_meta = classify_turn_route(req.session_id, req.question, req.kb_id)
+            pending_proposals: list = []
+            if go_agent:
+                answer, sources, history, pending_proposals = agent_turn(req.session_id, req.question, req.kb_id)
+            else:
+                answer, sources, history = chat_single_turn(req.session_id, req.question, req.kb_id)
+            resp = ChatResponse(answer=answer, sources=sources, history=history, route=route_meta,
+                                pending_proposals=pending_proposals)
+    except GateFull as e:
+        raise HTTPException(status_code=429, detail=e.message)
     return ApiResponse(data=resp.model_dump())
 
 # 流式发送接口（v3.0 新增）：SSE 协议，答案逐字推送，前端边收边渲染
@@ -67,25 +74,37 @@ async def stream_message(req: ChatRequest, request: Request):
         )
 
     def event_stream():
-        # 【W8-卡3】分岔口（与 /send 同一份判定，放在同步生成器里 → 线程池迭代，
-        # 首次 embedding 冷加载不阻塞事件循环）：Agent 分支一次性产出——
-        # 轨迹逐行流式是 /api/agent/chat/stream（卡 5）的职责，普通聊天分岔到 Agent 不推轨迹
-        go_agent, route_meta = classify_turn_route(req.session_id, req.question, req.kb_id)
-        if go_agent:
-            # 【W8-卡5.2】Agent 轮的待确认写入方案随 done 事件透传（前端弹确认卡片）
-            answer, sources, history, pending_proposals = agent_turn(req.session_id, req.question, req.kb_id)
-            yield f"event: sources\ndata: {json.dumps({'sources': sources}, ensure_ascii=False)}\n\n"
-            yield f"event: token\ndata: {json.dumps({'delta': answer}, ensure_ascii=False)}\n\n"
-            done = {"answer": answer, "history": [m.model_dump() for m in history],
-                    "route": route_meta, "pending_proposals": pending_proposals}
-            yield f"event: done\ndata: {json.dumps(done, ensure_ascii=False)}\n\n"
+        # 【v3.33】闸门进/出都放在同步生成器里：排队等待发生在线程池线程，
+        # 不阻塞事件循环；队满/超时以 SSE error 事件收尾（流已 200 开出，无 4xx 语义）
+        try:
+            gate = get_generation_gate()
+            gate.enter()
+        except GateFull as e:
+            full_message = e.message
+            yield f"event: error\ndata: {json.dumps({'type': 'error', 'code': 'gate_full', 'message': full_message}, ensure_ascii=False)}\n\n"
             return
-        for event in chat_single_turn_stream(req.session_id, req.question, req.kb_id):
-            event_type = event.pop("type")
-            # 【W8-卡3】路由决策随 done 事件透传（可解释性；前端对未知字段天然忽略）
-            if event_type == "done" and route_meta is not None:
-                event["route"] = route_meta
-            yield f"event: {event_type}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+        try:
+            # 【W8-卡3】分岔口（与 /send 同一份判定，放在同步生成器里 → 线程池迭代，
+            # 首次 embedding 冷加载不阻塞事件循环）：Agent 分支一次性产出——
+            # 轨迹逐行流式是 /api/agent/chat/stream（卡 5）的职责，普通聊天分岔到 Agent 不推轨迹
+            go_agent, route_meta = classify_turn_route(req.session_id, req.question, req.kb_id)
+            if go_agent:
+                # 【W8-卡5.2】Agent 轮的待确认写入方案随 done 事件透传（前端弹确认卡片）
+                answer, sources, history, pending_proposals = agent_turn(req.session_id, req.question, req.kb_id)
+                yield f"event: sources\ndata: {json.dumps({'sources': sources}, ensure_ascii=False)}\n\n"
+                yield f"event: token\ndata: {json.dumps({'delta': answer}, ensure_ascii=False)}\n\n"
+                done = {"answer": answer, "history": [m.model_dump() for m in history],
+                        "route": route_meta, "pending_proposals": pending_proposals}
+                yield f"event: done\ndata: {json.dumps(done, ensure_ascii=False)}\n\n"
+                return
+            for event in chat_single_turn_stream(req.session_id, req.question, req.kb_id):
+                event_type = event.pop("type")
+                # 【W8-卡3】路由决策随 done 事件透传（可解释性；前端对未知字段天然忽略）
+                if event_type == "done" and route_meta is not None:
+                    event["route"] = route_meta
+                yield f"event: {event_type}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+        finally:
+            gate.leave()  # 客户端断流（GeneratorExit）也必须还席
 
     return StreamingResponse(
         event_stream(),
