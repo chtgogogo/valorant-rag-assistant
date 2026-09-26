@@ -6,11 +6,13 @@ import json
 import queue
 import threading
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from config.settings import resolve_kb_id
-from schemas.models import AgentChatRequest, AgentChatResponse, ApiResponse
+from schemas.models import (AgentChatRequest, AgentChatResponse, ApiResponse,
+                            KbWriteConfirmRequest)
+from utils.auth import verify_admin
 from utils.rate_limit import check_chat_rate_limit, RateLimitExceeded
 from routers.chat_router import _client_ip  # 【W8-卡1】同一套真实 IP 解析（Nginx 反代后限流口径一致）
 
@@ -31,6 +33,7 @@ def agent_chat(req: AgentChatRequest, request: Request):
         sources=result["sources"],
         steps=result["steps"],
         degraded=result["degraded"],
+        pending_proposals=result.get("pending_proposals", []),  # 【W8-卡4】待人工确认的写入方案
     )
     return ApiResponse(data=resp.model_dump())
 
@@ -59,7 +62,8 @@ def agent_chat_stream(req: AgentChatRequest, request: Request):
                                session_id=req.session_id, on_event=events.put)
             events.put({"type": "done", "answer": result["answer"],
                         "sources": result["sources"],
-                        "degraded": result["degraded"]})
+                        "degraded": result["degraded"],
+                        "pending_proposals": result.get("pending_proposals", [])})  # 【W8-卡4】前端弹确认卡片的素材
         except Exception as e:  # Agent 本体异常：结构化 error 事件（前端错误气泡），不留悬挂流
             events.put({"type": "error", "message": f"Agent 执行失败：{e}"})
         finally:
@@ -77,3 +81,22 @@ def agent_chat_stream(req: AgentChatRequest, request: Request):
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
                                       "X-Accel-Buffering": "no"})  # Nginx 反代不缓冲，轨迹才逐行到得了前端
+
+
+# ------------------------------------------------------------
+# 【W8-卡4】知识库写入确认门（D4 拍板：写操作进 Agent + 人工确认）
+# propose_kb_write 只产方案不落库；本端点是唯一的写入执行入口：
+#   双因子凭据 = proposal_id（一次性、10 分钟过期）+ X-Admin-Key（管理密码门，fail-closed）
+#   伪造 404 / 过期 410 / 重放 409 / 入库失败 502，全部拒绝执行
+# ------------------------------------------------------------
+@agent_router.post("/kb-write/confirm", response_model=ApiResponse,
+                   summary="确认知识库写入方案（管理密码门：X-Admin-Key）",
+                   dependencies=[Depends(verify_admin)])
+def confirm_kb_write(req: KbWriteConfirmRequest):
+    from services.agent.actions import ProposalRejected, confirm_proposal
+    try:
+        result = confirm_proposal(req.proposal_id)
+    except ProposalRejected as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    return ApiResponse(data={**result,
+                             "message": f"已写入知识库 [{result['kb_id']}]，生成文档 {result['doc_id']}（{result['chunk_count']} 块），可检索生效"})

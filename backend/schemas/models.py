@@ -56,3 +56,7 @@ class AgentChatResponse(BaseModel):
     sources: List[Dict]  # 引用来源：[{"name": "文档名", "id": "文档id"}]
     steps: List[AgentStep]  # 执行轨迹
     degraded: bool = False  # 是否触发了未完成/降级（卡 2 起有真实降级路径）
+    pending_proposals: List[Dict] = []  # 【W8-卡4】待人工确认的知识库写入方案（凭据 proposal_id，确认走 /api/agent/kb-write/confirm）
+# 【W8-卡4】知识库写入方案确认请求（凭据 = proposal_id + X-Admin-Key 管理密码双因子）
+class KbWriteConfirmRequest(BaseModel):
+    proposal_id: str = Field(min_length=1, max_length=64)  # propose_kb_write 生成的方案凭据

@@ -164,7 +164,7 @@ class TestRunAgent:
                     AIMessage(content="", tool_calls=[])])
         calls = []
         monkeypatch.setattr(loop_mod, "execute_tool",
-                            lambda name, args, default_kb_id="": calls.append(name)
+                            lambda name, args, default_kb_id="", ctx=None: calls.append(name)
                             or (False, "（工具执行失败：mock）", []))
         out = run_agent("连续失败", kb_id="valorant")
         assert len(calls) == 2  # 第三次调用被熔断拦截，不再执行真工具

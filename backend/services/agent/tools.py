@@ -56,8 +56,85 @@ TOOLS_SPEC = [
                 "required": ["query"],
             },
         },
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_tickets",
+            "description": "查询客服工单列表（只读）。用户问\"有哪些工单/未处理的反馈/工单处理进展\"时使用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "enum": ["open", "resolved", "closed", "all"],
+                               "description": "按状态筛选，默认 all"},
+                    "limit": {"type": "integer", "description": "返回条数，默认 10，最多 50"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_kb_write",
+            "description": "向知识库提交写入方案。注意：本工具只生成待审核方案，不会立即写入知识库，"
+                           "必须等管理员确认后才会生效。用户明确要求\"把…加进知识库/更新知识库\"时使用；"
+                           "content 必须是完整、自包含的文本（不依赖对话上下文也能看懂）。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string",
+                                "description": "要写入知识库的完整文本内容（自包含）"},
+                    "kb_id": {"type": "string",
+                              "description": "目标知识库 id（可选，默认当前领域知识库）"},
+                    "reason": {"type": "string", "description": "给审核人看的写入理由"},
+                },
+                "required": ["content"],
+            },
+        },
+    },
 ]
+
+_TICKET_STATUS = ("open", "resolved", "closed")
+
+
+def query_tickets(status: str = "", limit: int = 10) -> str:
+    """工单查询工具（只读）：复用 ticket_service.list_tickets，格式化为模型可读文本"""
+    from services.ticket_service import list_tickets
+
+    status = (str(status or "") or "all").strip().lower()
+    if status != "all" and status not in _TICKET_STATUS:
+        return "（参数 status 只能是 open / resolved / closed / all）"
+    try:
+        limit = max(1, min(int(limit or 10), 50))  # 夹紧上限：防模型要 1 万条撑爆上下文
+    except (TypeError, ValueError):
+        limit = 10
+    rows = list_tickets(status=None if status == "all" else status, limit=limit)
+    if not rows:
+        return "（当前没有符合条件的工单）"
+    lines = [f"共 {len(rows)} 条工单："]
+    for t in rows:
+        line = (f"- {t['id']}｜状态 {t['status']}｜问题：{(t.get('question') or '')[:80]}"
+                f"｜建单 {t.get('created_at', '')}")
+        if t.get("answer"):  # 已解决工单带标准答案摘要（模型可据此答复处理进展）
+            line += f"｜标准答案：{t['answer'][:60]}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def propose_kb_write(content: str, kb_id: str, reason: str = "",
+                     ctx: Optional[dict] = None) -> str:
+    """知识库写入方案工具：只生成方案单据，绝不执行写入（执行在确认门 actions.confirm_proposal）。
+    方案摘要挂到本轮执行上下文 ctx，随响应回传前端供管理员确认。"""
+    from config.settings import resolve_kb_id
+    from services.agent.actions import create_proposal, proposal_summary
+
+    resolve_kb_id(kb_id)  # 白名单前置校验：非法/未知库在这里给出可读文案，而非内部异常
+    proposal = create_proposal(kb_id=kb_id, content=content, reason=reason)
+    if ctx is not None:
+        ctx.setdefault("pending_proposals", []).append(proposal_summary(proposal))
+    return (f"写入方案已生成（proposal_id={proposal['proposal_id']}，"
+            f"目标知识库={proposal['kb_id']}，内容 {len(proposal['content'])} 字），尚未写入。"
+            f"请明确告知用户：该操作需管理员确认后才会生效，在此之前知识库不会有任何变化。")
 
 
 def search_knowledge_base(query: str, kb_id: Optional[str] = None,
@@ -79,14 +156,19 @@ def search_knowledge_base(query: str, kb_id: Optional[str] = None,
     return "\n\n".join(lines), sources
 
 
-# 工具名 → 实现。新增工具（卡 4）在此注册即可，循环代码零改动
+# 工具名 → 实现。新增工具在此注册即可，循环代码零改动
 _TOOL_IMPL = {
     "search_knowledge_base": search_knowledge_base,
+    "query_tickets": query_tickets,
+    "propose_kb_write": propose_kb_write,
 }
 
 
-def execute_tool(name: str, args: dict, default_kb_id: str) -> tuple[bool, str, list[dict]]:
+def execute_tool(name: str, args: dict, default_kb_id: str,
+                 ctx: Optional[dict] = None) -> tuple[bool, str, list[dict]]:
     """分发执行一个工具调用
+    :param ctx: 本轮执行的上下文（run_agent 每次新建），动作类工具用来携带
+                pending_proposals 等结构化产物回传；检索类工具不使用
     :return: (是否成功, 喂给模型的文本, 结构化来源)
              未知工具名 / 参数缺失 / 内部异常 一律转错误字符串，不抛异常
     """
@@ -103,6 +185,23 @@ def execute_tool(name: str, args: dict, default_kb_id: str) -> tuple[bool, str, 
             logger.info("Agent工具执行: search_knowledge_base query=%r kb=%s 来源数=%d",
                         query, args.get("kb_id") or default_kb_id, len(sources))
             return True, text, sources
+        if name == "query_tickets":
+            status = str(args.get("status") or "").strip().lower()
+            if status and status != "all" and status not in _TICKET_STATUS:
+                return False, "（参数 status 只能是 open / resolved / closed / all）", []
+            text = impl(status=status or "all", limit=args.get("limit", 10))
+            logger.info("Agent工具执行: query_tickets status=%r limit=%r", status, args.get("limit"))
+            return True, text, []
+        if name == "propose_kb_write":
+            content = str(args.get("content") or "").strip()
+            if not content:
+                return False, "（参数 content 不能为空：请把要写入知识库的完整内容整理好再提交方案）", []
+            kb = args.get("kb_id") or default_kb_id
+            text = impl(content=content, kb_id=kb,
+                        reason=str(args.get("reason") or ""), ctx=ctx)
+            logger.info("Agent工具执行: propose_kb_write kb=%s 内容%d字（方案待人工确认）",
+                        kb, len(content))
+            return True, text, []
         return False, f"（工具 {name} 缺少执行分支）", []
     except Exception as e:  # 工具失败不炸循环：错误原样给模型，由它决定重试/换词/放弃
         logger.warning("Agent工具执行失败: %s %s -> %s", name, args, e)
