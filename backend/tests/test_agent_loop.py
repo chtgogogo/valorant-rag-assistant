@@ -5,6 +5,8 @@ import pytest
 from langchain_core.messages import AIMessage
 from schemas.models import SearchResult
 
+from config.settings import RAG_CONFIG
+
 import services.agent.loop as loop_mod
 import services.agent.tools as tools_mod
 from services.agent.loop import run_agent
@@ -129,18 +131,22 @@ class TestRunAgent:
         assert out["degraded"] is False
         assert "未检索到相关资料" in out["answer"]
 
-    def test_max_steps_exhausted_reports_degraded(self, patch_llms, monkeypatch):
-        """模型一直要工具 → 步数上限触发，degraded=True（卡 2 在此接降级）"""
+    def test_max_steps_exhausted_degrades_to_workflow(self, patch_llms, monkeypatch, tmp_path):
+        """步数超限 → 降级回 Workflow（mock）+ 说明前缀 + degraded=True（卡 2）"""
+        monkeypatch.setitem(RAG_CONFIG, "agent_trace_dir", str(tmp_path))
         patch_llms([_tool_call_ai(query=f"q{i}", call_id=f"c{i}") for i in range(10)])
         monkeypatch.setattr(tools_mod, "hybrid_search", lambda q, kb_id=None: [_r()])
         monkeypatch.setattr(tools_mod, "rerank", lambda q, c, top_k=None: c)
+        monkeypatch.setattr(loop_mod, "_degrade_to_workflow",
+                            lambda sid, q, kb, reason: f"（降级{reason}）基础答案")
         out = run_agent("无限检索", kb_id="valorant")
         assert out["degraded"] is True
-        assert "6" in out["answer"]
-        assert len(out["steps"]) == 6
+        assert "基础答案" in out["answer"] and "降级" in out["answer"]
+        assert out["steps"][-1]["type"] == "degraded"
 
-    def test_tool_failure_keeps_loop_alive(self, patch_llms, monkeypatch):
+    def test_tool_failure_keeps_loop_alive(self, patch_llms, monkeypatch, tmp_path):
         """工具失败（ok=False）不炸循环：错误串回填，模型看到后停止调用并终答"""
+        monkeypatch.setitem(RAG_CONFIG, "agent_trace_dir", str(tmp_path))
         patch_llms([_tool_call_ai(), AIMessage(content="", tool_calls=[])])
         monkeypatch.setattr(loop_mod, "execute_tool",
                             lambda *a, **k: (False, "（工具执行失败：mock）", []))
@@ -148,6 +154,51 @@ class TestRunAgent:
         assert out["degraded"] is False
         assert out["steps"][0]["ok"] is False
         assert out["sources"] == []
+
+    def test_circuit_breaker_disables_after_consecutive_fails(self, patch_llms, monkeypatch, tmp_path):
+        """卡2熔断：同一工具连续失败 2 次 → 停用，第三次调用不再执行真工具"""
+        monkeypatch.setitem(RAG_CONFIG, "agent_trace_dir", str(tmp_path))
+        patch_llms([_tool_call_ai(query="a", call_id="c1"),
+                    _tool_call_ai(query="b", call_id="c2"),
+                    _tool_call_ai(query="c", call_id="c3"),
+                    AIMessage(content="", tool_calls=[])])
+        calls = []
+        monkeypatch.setattr(loop_mod, "execute_tool",
+                            lambda name, args, default_kb_id="": calls.append(name)
+                            or (False, "（工具执行失败：mock）", []))
+        out = run_agent("连续失败", kb_id="valorant")
+        assert len(calls) == 2  # 第三次调用被熔断拦截，不再执行真工具
+        # 第三次的 ToolMessage 明确告知模型工具已停用
+        third = out["steps"][2]["summary"]
+        assert "停用" in third
+
+    def test_all_tools_disabled_degrades(self, patch_llms, monkeypatch, tmp_path):
+        """卡2死局：模型仍要工具但全部被停用 → 直接降级"""
+        monkeypatch.setitem(RAG_CONFIG, "agent_trace_dir", str(tmp_path))
+        patch_llms([_tool_call_ai(query="a", call_id="c1"),
+                    _tool_call_ai(query="b", call_id="c2"),
+                    _tool_call_ai(query="c", call_id="c3")])
+        monkeypatch.setattr(loop_mod, "execute_tool",
+                            lambda *a, **k: (False, "（工具执行失败：mock）", []))
+        monkeypatch.setattr(loop_mod, "_degrade_to_workflow",
+                            lambda sid, q, kb, reason: f"（降级：{reason}）")
+        out = run_agent("全熔断", kb_id="valorant")
+        assert out["degraded"] is True
+        assert "熔断" in out["answer"]
+
+    def test_trace_jsonl_written(self, patch_llms, monkeypatch, tmp_path):
+        """卡2轨迹：一次执行一个 JSONL 文件，meta/tool/final 行齐全可回放"""
+        monkeypatch.setitem(RAG_CONFIG, "agent_trace_dir", str(tmp_path))
+        patch_llms([_tool_call_ai(), AIMessage(content="", tool_calls=[])])
+        monkeypatch.setattr(tools_mod, "hybrid_search", lambda q, kb_id=None: [_r()])
+        monkeypatch.setattr(tools_mod, "rerank", lambda q, c, top_k=None: c)
+        run_agent("轨迹验证", kb_id="valorant")
+        files = list(tmp_path.glob("*.jsonl"))
+        assert len(files) == 1
+        lines = [__import__("json").loads(l) for l in files[0].read_text(encoding="utf-8").splitlines()]
+        types = [l["type"] for l in lines]
+        assert types[0] == "meta" and "tool_call" in types and "final" in types
+        assert all("ts" in l for l in lines)
 
     def test_sources_deduped_across_steps(self, patch_llms, monkeypatch):
         """两次检索命中同一文档时，来源只留一份"""

@@ -18,7 +18,7 @@ def agent_chat(req: AgentChatRequest, request: Request):
     except RateLimitExceeded as e:
         raise HTTPException(status_code=429, detail=e.message)
     resolve_kb_id(req.kb_id)  # kb 白名单：非法 400 / 未知 404，与 Workflow 同款防线
-    result = run_agent(req.question, kb_id=req.kb_id)
+    result = run_agent(req.question, kb_id=req.kb_id, session_id=req.session_id)
     resp = AgentChatResponse(
         answer=result["answer"],
         sources=result["sources"],

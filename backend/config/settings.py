@@ -142,6 +142,11 @@ CHAT_CONFIG = {
 #     开关均可用环境变量覆盖，方便答辩演示时对比效果
 # ------------------------------------------------------
 RAG_CONFIG = {
+    # 【W8-卡2】Agent 护栏配置：步数上限 / 同一工具连续失败熔断阈值 / 轨迹日志目录
+    # （agent loop.py 消费；步数超限或工具全熔断时自动降级回 Workflow 并向用户说明原因）
+    "agent_max_steps": int(os.getenv("AGENT_MAX_STEPS", "6")),
+    "agent_tool_fail_disable": int(os.getenv("AGENT_TOOL_FAIL_DISABLE", "2")),
+    "agent_trace_dir": os.getenv("AGENT_TRACE_DIR", str(DATA_DIR / "agent_traces")),
     # 向量检索总开关（v3.3）：关闭后仅走 BM25 关键词检索；
     # 注意 USE_VECTOR_RETRIEVAL=0 时 RAG_HYBRID 无意义（混合的前提是向量这一路存在）
     "enable_vector_search": os.getenv("USE_VECTOR_RETRIEVAL", "1") == "1",
