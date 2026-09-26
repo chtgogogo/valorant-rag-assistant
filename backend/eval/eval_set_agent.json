@@ -1,0 +1,21 @@
+{
+  "description": "W8 卡 3 · Agent 路由评测集：多跳/对比/统计/操作复合题应路由到 Agent（expect_route=agent），单跳事实/模糊/寒暄题应留在 Workflow（expect_route=workflow）。A 类≥10 道满足任务卡要求；W 类含边界钉子题（有哪些/几个等单跳常见词不上 Agent 规则表）。路由准确率 = expect_route 与 router_service.route_query 实际结果的一致比例，接线后纳入评测报告两列之一。",
+  "cases": [
+    {"id": "A01", "type": "对比", "question": "捷风和雷兹都是决斗类型英雄，玩法和技能有什么不同", "expect_route": "agent", "note": "阶段0『晚安焰火』原题，任务卡指定必含"},
+    {"id": "A02", "type": "对比", "question": "狂徒和幻影哪个更好用？", "expect_route": "agent", "note": "双武器对比"},
+    {"id": "A03", "type": "对比", "question": "暴徒和正义的差异是什么？", "expect_route": "agent", "note": "双武器差异"},
+    {"id": "A04", "type": "对比", "question": "捷风相比霓虹有什么优势？", "expect_route": "agent", "note": "双英雄对比"},
+    {"id": "A05", "type": "对比", "question": "决斗者和先锋的定位区别是什么？", "expect_route": "agent", "note": "双定位对比"},
+    {"id": "A06", "type": "对比(英文ID)", "question": "Vandal和Phantom有什么区别？", "expect_route": "agent", "note": "英文ID对比，呼应 variants V07"},
+    {"id": "A07", "type": "统计", "question": "游戏里一共有多少种武器？", "expect_route": "agent", "note": "全库统计聚合"},
+    {"id": "A08", "type": "统计", "question": "伤害最高的枪是哪把？和其他步枪比排名如何？", "expect_route": "agent", "note": "最高+排名双信号"},
+    {"id": "A09", "type": "操作复合", "question": "帮我查一下捷风的技能，并且告诉我雷兹的大招", "expect_route": "agent", "note": "任务卡示例句式：帮我…并且…"},
+    {"id": "A10", "type": "对比(法律域)", "question": "取保候审和缓刑有什么区别？", "expect_route": "agent", "note": "法律领域对比，验证跨领域规则通用性"},
+    {"id": "W01", "type": "单跳事实", "question": "捷风的大招是什么？", "expect_route": "workflow", "note": "单实体单跳"},
+    {"id": "W02", "type": "单跳事实", "question": "狂徒多少钱？", "expect_route": "workflow", "note": "单跳价格"},
+    {"id": "W03", "type": "模糊", "question": "这个怎么弄？", "expect_route": "workflow", "note": "模糊指代，拿不准默认 Workflow"},
+    {"id": "W04", "type": "寒暄", "question": "你好呀", "expect_route": "workflow", "note": "寒暄"},
+    {"id": "W05", "type": "单跳边界", "question": "决斗者有哪些？", "expect_route": "workflow", "note": "边界钉子：'有哪些'是单跳列举可检索直答，不上规则表；改规则前先看此用例"},
+    {"id": "W06", "type": "单跳边界", "question": "捷风有几个技能？", "expect_route": "workflow", "note": "边界钉子：'几个'非聚合统计（单实体事实），不上规则表；改规则前先看此用例"}
+  ]
+}
