@@ -205,6 +205,10 @@
             <span class="typing-dot"></span>
             <span class="typing-dot"></span>
             <span class="typing-dot"></span>
+            <!-- 【UX】思考轮播文案：loading 期间每 2.8s 换一条，让"后台在跑"看得见 -->
+            <transition name="think-fade" mode="out-in">
+              <span class="thinking-line" :key="thinkingIdx">{{ thinkingLines[thinkingIdx] }}</span>
+            </transition>
           </div>
         </div>
       </div>
@@ -251,7 +255,7 @@
  </template>
 
 <script setup>
-import { ref, reactive, nextTick, onMounted, computed } from 'vue'
+import { ref, reactive, nextTick, onMounted, onUnmounted, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -265,6 +269,36 @@ const emit = defineEmits(['manage'])
  const sidebarOpen = ref(window.innerWidth > 768)
 const inputText = ref('')
 const loading = ref(false)
+
+// ---- 思考轮播文案（UX）：模型检索/思考期间在加载气泡里每 2.8s 换一条趣味文案，
+// 让"后台在跑"看得见，而不是三点静止像卡死。普通问答与 Agent 模式共用（loading 期间生效）。
+const THINKING_LINES = [
+  '请主人稍等片刻噢，我正在全力搜查资料～',
+  '真是问了一个很刁钻的问题呢……',
+  '答案.... 答案在哪里呢.....？',
+  '翻遍了整个档案柜，马上就好～',
+  '情报交叉核对中，绝不瞎编是我们的底线！',
+  '唔……这段资料有点意思，让我再确认下来源。',
+  '正在把散落的线索拼成完整的答案……',
+  '检索小分队已经出发，请等待他们凯旋～',
+  '别急别急，好答案值得多等两秒。',
+  '知识库翻得哗哗响，马上给你翻出答案！',
+]
+const thinkingIdx = ref(Math.floor(Math.random() * THINKING_LINES.length))
+let thinkingTimer = null
+watch(loading, (on) => {
+  if (on) {
+    thinkingIdx.value = (thinkingIdx.value + 1) % THINKING_LINES.length // 每次提问换起点，避免连问两轮看到同一句
+    clearInterval(thinkingTimer)
+    thinkingTimer = setInterval(() => {
+      thinkingIdx.value = (thinkingIdx.value + 1) % THINKING_LINES.length
+    }, 2800)
+  } else {
+    clearInterval(thinkingTimer)
+    thinkingTimer = null
+  }
+})
+onUnmounted(() => clearInterval(thinkingTimer))
 const backendOnline = ref(false)
 const messagesContainer = ref(null)
 const inputRef = ref(null)
@@ -1615,6 +1649,18 @@ async function handleRollback() {
 
 .typing-dot:nth-child(2) { animation-delay: 0.2s; }
 .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* 【UX】思考轮播文案：随三点一起呼吸，切换时淡入淡出 */
+.thinking-line {
+  margin-left: 8px;
+  font-size: 13px;
+  color: var(--val-text-dim);
+  letter-spacing: 0.3px;
+}
+.think-fade-enter-active,
+.think-fade-leave-active { transition: opacity 0.35s ease, transform 0.35s ease; }
+.think-fade-enter-from { opacity: 0; transform: translateY(4px); }
+.think-fade-leave-to { opacity: 0; transform: translateY(-4px); }
 
 @keyframes dotBounce {
   0%, 80%, 100% { transform: scale(0.5); opacity: 0.3; }
