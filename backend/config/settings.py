@@ -259,6 +259,7 @@ MAINTENANCE_CONFIG = {
     "enabled": os.getenv("OPS_MAINTENANCE", "1") == "1",
     "session_retention_days": int(os.getenv("SESSION_RETENTION_DAYS", "30")),  # 会话 N 天没动自动清理
     "audit_retention_months": int(os.getenv("AUDIT_RETENTION_MONTHS", "6")),   # 审计超 N 个月 gzip 归档
+    "trace_retention_days": int(os.getenv("AGENT_TRACE_RETENTION_DAYS", "30")),  # Agent 轨迹 N 天没动自动清理（v3.34）
     "interval_hours": float(os.getenv("MAINTENANCE_INTERVAL_HOURS", "6")),     # 维护轮询间隔
 }
 

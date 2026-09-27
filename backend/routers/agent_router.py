@@ -13,6 +13,7 @@ from config.settings import resolve_kb_id
 from schemas.models import (AgentChatRequest, AgentChatResponse, ApiResponse,
                             KbWriteConfirmRequest)
 from utils.auth import verify_admin
+from utils.concurrency_gate import get_generation_gate, GateFull  # 【v3.34】Agent 端点同款并发闸门
 from utils.rate_limit import check_chat_rate_limit, RateLimitExceeded
 from routers.chat_router import _client_ip  # 【W8-卡1】同一套真实 IP 解析（Nginx 反代后限流口径一致）
 
@@ -27,7 +28,13 @@ def agent_chat(req: AgentChatRequest, request: Request):
     except RateLimitExceeded as e:
         raise HTTPException(status_code=429, detail=e.message)
     resolve_kb_id(req.kb_id)  # kb 白名单：非法 400 / 未知 404，与 Workflow 同款防线
-    result = run_agent(req.question, kb_id=req.kb_id, session_id=req.session_id)
+    # 【v3.34】并发闸门：Agent 每问消耗多次 LLM 调用，比 Workflow 更占容量，
+    # 却是全站唯一没接闸门的生成端点——同步 def 在线程池里排队等位，队满/超时 429
+    try:
+        with get_generation_gate():
+            result = run_agent(req.question, kb_id=req.kb_id, session_id=req.session_id)
+    except GateFull as e:
+        raise HTTPException(status_code=429, detail=e.message)
     resp = AgentChatResponse(
         answer=result["answer"],
         sources=result["sources"],
@@ -58,12 +65,21 @@ def agent_chat_stream(req: AgentChatRequest, request: Request):
     def worker():
         """线程里跑同步 Agent 循环，事件经回调推入队列；结束/异常都保证流会关闭"""
         try:
-            result = run_agent(req.question, kb_id=req.kb_id,
-                               session_id=req.session_id, on_event=events.put)
-            events.put({"type": "done", "answer": result["answer"],
-                        "sources": result["sources"],
-                        "degraded": result["degraded"],
-                        "pending_proposals": result.get("pending_proposals", [])})  # 【W8-卡4】前端弹确认卡片的素材
+            gate = get_generation_gate()
+            try:
+                gate.enter()  # 【v3.34】排队等待在 worker 线程里，不阻事件循环
+            except GateFull as e:
+                events.put({"type": "error", "code": "gate_full", "message": e.message})
+                return
+            try:
+                result = run_agent(req.question, kb_id=req.kb_id,
+                                   session_id=req.session_id, on_event=events.put)
+                events.put({"type": "done", "answer": result["answer"],
+                            "sources": result["sources"],
+                            "degraded": result["degraded"],
+                            "pending_proposals": result.get("pending_proposals", [])})  # 【W8-卡4】前端弹确认卡片的素材
+            finally:
+                gate.leave()  # 正常结束/执行异常/客户端断开都要还席
         except Exception as e:  # Agent 本体异常：结构化 error 事件（前端错误气泡），不留悬挂流
             events.put({"type": "error", "message": f"Agent 执行失败：{e}"})
         finally:

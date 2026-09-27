@@ -13,6 +13,9 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+from fastapi import HTTPException
+
+from config.settings import resolve_kb_id
 from schemas.models import SearchResult
 from services.hybrid_retriever import hybrid_search
 from services.reranker import rerank
@@ -125,7 +128,6 @@ def propose_kb_write(content: str, kb_id: str, reason: str = "",
                      ctx: Optional[dict] = None) -> str:
     """知识库写入方案工具：只生成方案单据，绝不执行写入（执行在确认门 actions.confirm_proposal）。
     方案摘要挂到本轮执行上下文 ctx，随响应回传前端供管理员确认。"""
-    from config.settings import resolve_kb_id
     from services.agent.actions import create_proposal, proposal_summary
 
     resolve_kb_id(kb_id)  # 白名单前置校验：非法/未知库在这里给出可读文案，而非内部异常
@@ -180,6 +182,12 @@ def execute_tool(name: str, args: dict, default_kb_id: str,
             query = str(args.get("query") or "").strip()
             if not query:
                 return False, "（参数 query 不能为空）", []
+            # 【v3.34】kb_id 白名单（SEC-5：模型给的工具参数进执行前先核对）：
+            # 模型编造/跨域指库时给可读错误，而非静默 get_or_create 出空 collection
+            try:
+                resolve_kb_id(args.get("kb_id"))
+            except HTTPException as e:
+                return False, f"（kb_id 不可用：{e.detail}。请改用默认知识库，即不传 kb_id）", []
             text, sources = impl(query, kb_id=args.get("kb_id"),
                                  default_kb_id=default_kb_id)
             logger.info("Agent工具执行: search_knowledge_base query=%r kb=%s 来源数=%d",

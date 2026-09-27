@@ -86,19 +86,43 @@ def rotate_old_audits(audit_dir: str, retention_months: int,
     return archived
 
 
+def cleanup_old_traces(trace_dir: str, retention_days: int,
+                       now: float = None) -> int:
+    """【v3.34】删除超过保留期的 Agent 轨迹 JSONL（每问一个文件，与会话同款只增不减问题）；
+    轨迹是可再生的调试产物，直接删（不像审计需无损归档）"""
+    if retention_days <= 0 or not os.path.isdir(trace_dir):
+        return 0
+    cutoff = (now or time.time()) - retention_days * 86400
+    removed = 0
+    for name in os.listdir(trace_dir):
+        if not name.endswith(".jsonl"):
+            continue
+        path = os.path.join(trace_dir, name)
+        try:
+            if os.path.getmtime(path) < cutoff:
+                os.remove(path)
+                removed += 1
+        except OSError as e:
+            logger.warning("[数据维护] 轨迹清理跳过 %s: %s", name, e)
+    return removed
+
+
 def run_maintenance_once() -> dict:
     """跑一轮全部维护项（启动后首清与周期轮询共用这一个入口）"""
-    from config.settings import CHAT_CONFIG, MAINTENANCE_CONFIG
+    from config.settings import CHAT_CONFIG, MAINTENANCE_CONFIG, RAG_CONFIG
     from utils.audit import AUDIT_DIR
 
     sessions = cleanup_expired_sessions(
         CHAT_CONFIG["history_path"], MAINTENANCE_CONFIG["session_retention_days"])
     audits = rotate_old_audits(
         AUDIT_DIR, MAINTENANCE_CONFIG["audit_retention_months"])
-    if sessions or audits:
-        logger.info("[数据维护] 本轮完成：清理过期会话 %d 个，归档审计 %d 个文件",
-                    sessions, len(audits))
-    return {"sessions_removed": sessions, "audits_archived": audits}
+    traces = cleanup_old_traces(
+        RAG_CONFIG["agent_trace_dir"], MAINTENANCE_CONFIG["trace_retention_days"])
+    if sessions or audits or traces:
+        logger.info("[数据维护] 本轮完成：清理过期会话 %d 个，归档审计 %d 个文件，清理过期轨迹 %d 个",
+                    sessions, len(audits), traces)
+    return {"sessions_removed": sessions, "audits_archived": audits,
+            "traces_removed": traces}
 
 
 _daemon_started = threading.Event()

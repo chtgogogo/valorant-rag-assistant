@@ -134,11 +134,20 @@ def run_agent(question: str, kb_id: str,
     seen_sources: set = set()
     fail_counts: dict[str, int] = {}   # 【卡2】工具名 -> 连续失败次数
     disabled: set[str] = set()         # 【卡2】已熔断停用的工具
+    seen_calls: dict[str, int] = {}    # 【v3.34】工具名+参数指纹 -> 调用次数（无进展检测，LOOP-2）
     ctx: dict = {}                     # 【卡4】本轮执行上下文：动作类工具携带结构化产物（如待确认写入方案）
 
     for step_no in range(1, max_steps + 1):
         t0 = time.time()
-        ai: AIMessage = decide_llm.bind_tools(TOOLS_SPEC).invoke(messages)
+        try:
+            ai: AIMessage = decide_llm.bind_tools(TOOLS_SPEC).invoke(messages)
+        except Exception as e:
+            # 【v3.34】决策模型自身故障（限流 429/断网/超时）同样兑现降级承诺：
+            # 回落 Workflow（其自带 v3.18 限流兜底模型）而不是把异常抛给用户
+            reason = f"决策模型调用失败：{e}"
+            logger.warning("Agent第%d步: %s → 降级Workflow", step_no, reason)
+            return _finish_degraded(steps, trace, question, kb_id, session_id,
+                                    reason, sources, on_event=on_event, ctx=ctx)
 
         if not ai.tool_calls:
             # 模型判定够了。content 通常已含草稿答案，但统一走开思考终答
@@ -172,6 +181,11 @@ def run_agent(question: str, kb_id: str,
         for tc in ai.tool_calls:
             name = tc["name"]
             _emit(on_event, "tool_call", step=step_no, tool=name, args=tc.get("args"))
+            # 【v3.34】无进展检测（LOOP-2 最小对策）：同工具+同参数指纹重复时，
+            # 在结果前提示"结果不会变化"，引导模型换词——不计熔断（工具没坏，是原地打转）
+            fp = name + ":" + json.dumps(tc.get("args") or {}, ensure_ascii=False, sort_keys=True)
+            repeat_no = seen_calls.get(fp, 0) + 1
+            seen_calls[fp] = repeat_no
             if name in disabled:
                 text = f"（工具 {name} 已因连续失败被停用，请改用其他方式或直接回答）"
                 ok = False
@@ -193,6 +207,9 @@ def run_agent(question: str, kb_id: str,
                         disabled.add(name)
                         text += f"\n（工具 {name} 已连续失败 {fail_counts[name]} 次，本轮停用）"
                         logger.warning("Agent工具熔断: %s 连败%d次", name, fail_counts[name])
+            if repeat_no >= 2:
+                text = (f"（提示：这是第 {repeat_no} 次以完全相同的参数调用 {name}，结果不会变化。"
+                        f"请换更精确的关键词重查，或基于已有资料直接回答。）\n{text}")
             messages.append(ToolMessage(content=text, tool_call_id=tc["id"]))
             steps.append({"step": step_no, "type": "tool_call", "tool": name,
                           "args": tc.get("args"), "summary": _summarize(text),
