@@ -207,7 +207,7 @@
             <span class="typing-dot"></span>
             <!-- 【UX】思考轮播文案：loading 期间每 2.8s 换一条，让"后台在跑"看得见 -->
             <transition name="think-fade" mode="out-in">
-              <span class="thinking-line" :key="thinkingIdx">{{ thinkingLines[thinkingIdx] }}</span>
+              <span class="thinking-line" :key="thinkingIdx">{{ THINKING_LINES[thinkingIdx] }}</span>
             </transition>
           </div>
         </div>
